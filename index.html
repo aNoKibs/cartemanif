@@ -29,7 +29,7 @@
   #radarWrap { position: relative; width: 100%; aspect-ratio: 1; background: var(--panel); border: 1px solid var(--line); border-radius: 16px; overflow: hidden; }
   canvas { width: 100%; height: 100%; display: block; }
   .tools { display: flex; gap: 6px; margin: 8px 0; flex-wrap: wrap; }
-  .tools button { flex: 1; font-size: 14px; padding: 9px 6px; }
+  .tools button { flex: 1; font-size: 14px; padding: 9px 4px; white-space: nowrap; }
   ul { list-style: none; margin: 0; padding: 0; }
   li { display: flex; align-items: center; gap: 12px; padding: 10px 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; margin-bottom: 6px; }
   .arrow { width: 34px; height: 34px; flex: none; display: grid; place-items: center; font-size: 22px; transition: transform .3s; }
@@ -58,8 +58,9 @@
 
 <div class="tools">
   <button id="btnCompass">Boussole</button>
-  <button id="btnWake">Écran allumé</button>
-  <button id="btnZoom">Zoom : auto</button>
+  <button id="btnWake">Écran on</button>
+  <button id="btnZoom">Zoom auto</button>
+  <button id="btnCalib">Calibrer</button>
 </div>
 
 <ul id="liste"><li class="empty" style="display:block">Personne pour l'instant. Connecte ta carte, les autres apparaîtront ici.</li></ul>
@@ -139,15 +140,24 @@ async function surDeconnexion() {
 
 function recevoir(dv) {
   if (dv.byteLength < 20) return;
-  const id = dv.getUint32(0, true).toString(16).padStart(8, "0");
-  const lat = dv.getInt32(4, true) / 1e7;
-  const lon = dv.getInt32(8, true) / 1e7;
-  const acc = dv.getUint8(12);
-  const ageMin = dv.getUint8(13);
+  const id = (dv.getUint8(0) | dv.getUint8(1) << 8 | dv.getUint8(2) << 16).toString(16).padStart(6, "0");
+  const lat = dv.getInt32(3, true) / 1e7;
+  const lon = dv.getInt32(7, true) / 1e7;
+  const acc = dv.getUint8(11);
+  const ageMin = dv.getUint8(12);
+  const rssi = dv.getInt8(13);              // 0 = recu via un relais (pas de mesure)
   let nom = "";
   for (let i = 14; i < 20; i++) { const c = dv.getUint8(i); if (c) nom += String.fromCharCode(c); }
-  if (!peers.has(id) && navigator.vibrate) navigator.vibrate(60);   // petite vibration a la 1re apparition
-  peers.set(id, { nom: nom || "?" + id.slice(-3), lat, lon, sansGps: acc === 255, acc, ageMin, vu: Date.now() });
+  const avant = peers.get(id);
+  if (!avant && navigator.vibrate) navigator.vibrate(60);   // petite vibration a la 1re apparition
+  const now = Date.now();
+  // force du signal lissee (moyenne glissante), seulement quand recu en direct
+  let sig = avant ? avant.sig : null, sigVu = avant ? avant.sigVu : 0;
+  if (rssi < 0) {
+    sig = (sig == null || now - sigVu > 10000) ? rssi : sig * 0.7 + rssi * 0.3;
+    sigVu = now;
+  }
+  peers.set(id, { nom: nom || "?" + id.slice(-3), lat, lon, sansGps: acc === 255, acc, ageMin, vu: now, sig, sigVu });
   dessiner();
 }
 
@@ -258,7 +268,17 @@ if (store.get("wake", "0") === "1") demanderWake();
 
 $("btnZoom").onclick = () => {
   zoomIdx = (zoomIdx + 1) % ZOOMS.length;
-  $("btnZoom").textContent = "Zoom : " + (ZOOMS[zoomIdx] ? fmtDist(ZOOMS[zoomIdx]) : "auto");
+  $("btnZoom").textContent = ZOOMS[zoomIdx] ? fmtDist(ZOOMS[zoomIdx]) : "Zoom auto";
+  dessiner();
+};
+
+$("btnCalib").onclick = () => {
+  const now = Date.now();
+  const frais = [...peers.values()].filter(p => p.sig != null && now - p.sigVu < 5000);
+  if (!frais.length) { alert("Aucun signal direct reçu en ce moment. Place-toi à 1 m d'une autre carte et réessaie."); return; }
+  const proche = frais.reduce((a, b) => (b.sig > a.sig ? b : a));
+  if (!confirm("Calibrer avec " + proche.nom + " (signal " + Math.round(proche.sig) + " dBm) ?\nVous devez être à 1 m l'un de l'autre, cartes à leur place habituelle.")) return;
+  REF_1M = proche.sig; store.set("ref1m", String(REF_1M));
   dessiner();
 };
 
@@ -272,6 +292,15 @@ function distCap(a, b) {
   const y = Math.sin(dLon) * Math.cos(la2);
   const x = Math.cos(la1) * Math.sin(la2) - Math.sin(la1) * Math.cos(la2) * Math.cos(dLon);
   return { d, cap: (Math.atan2(y, x) / toR + 360) % 360 };
+}
+// Distance estimee a partir de la force du signal.
+// REF = signal mesure a 1 m (reglable avec le bouton "Calibrer 1 m"), N = attenuation du milieu.
+let REF_1M = parseFloat(store.get("ref1m", "-40"));
+const N_ATT = 2.5;
+function distSignal(sig) { return Math.pow(10, (REF_1M - sig) / (10 * N_ATT)); }
+function barres(sig) {
+  const n = sig > -55 ? 4 : sig > -67 ? 3 : sig > -78 ? 2 : sig > -88 ? 1 : 0;
+  return "▮".repeat(n) + "▯".repeat(4 - n);
 }
 function fmtDist(m) { return m < 1000 ? Math.round(m) + " m" : (m / 1000).toFixed(m < 10000 ? 1 : 0) + " km"; }
 function fmtAge(s) { return s < 60 ? s + " s" : Math.floor(s / 60) + " min"; }
@@ -296,9 +325,15 @@ function dessiner() {
     const vuS = Math.round((now - p.vu) / 1000);
     const it = { id, ...p, vuS };
     if (me && !p.sansGps) Object.assign(it, distCap(me, p));
+    it.sigFrais = p.sig != null && now - p.sigVu < 10000;
+    if (it.sigFrais) it.dSig = distSignal(p.sig);
+    // trop proches : l'erreur des deux GPS est plus grande que la distance
+    it.gpsFlou = it.d != null && it.d < (me.acc + (p.acc || 0)) * 0.8;
+    // distance affichee : celle du signal quand le GPS n'est pas fiable a courte distance
+    it.dAff = (it.gpsFlou && it.sigFrais) ? it.dSig : (it.d != null ? it.d : (it.sigFrais ? it.dSig : null));
     liste.push(it);
   }
-  const loin = Math.max(0, ...liste.filter(i => i.d != null).map(i => i.d));
+  const loin = Math.max(0, ...liste.filter(i => i.dAff != null && i.cap != null).map(i => i.dAff));
   const echelle = ZOOMS[zoomIdx] || ECHELLES.find(e => e >= loin * 1.1) || ECHELLES[ECHELLES.length - 1];
 
   // anneaux
@@ -327,22 +362,26 @@ function dessiner() {
 
   // les autres
   for (const it of liste) {
-    if (it.d == null) continue;
+    if (it.cap == null || it.dAff == null) continue;
     const a = (it.cap - rot) * Math.PI / 180;
-    const r = Math.min(it.d / echelle, 1) * Rmax;
+    const r = Math.min(it.dAff / echelle, 1) * Rmax;
     const x = cx + Math.sin(a) * r, y = cy - Math.cos(a) * r;
     const vieux = it.vuS > 30 || it.ageMin > 0;
     ctx.globalAlpha = it.vuS > 120 ? .4 : 1;
     ctx.fillStyle = vieux ? col("--warn") : col("--ok");
     ctx.beginPath(); ctx.arc(x, y, 8, 0, Math.PI * 2); ctx.fill();
-    if (it.d > echelle) { ctx.strokeStyle = ctx.fillStyle; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x, y, 12, 0, Math.PI * 2); ctx.stroke(); }
+    if (it.gpsFlou) {   // direction pas fiable : cercle pointille autour de moi a la bonne distance
+      ctx.save(); ctx.setLineDash([4, 5]); ctx.strokeStyle = ctx.fillStyle; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.arc(cx, cy, Math.max(r, 10), 0, Math.PI * 2); ctx.stroke(); ctx.restore();
+    }
+    if (it.dAff > echelle) { ctx.strokeStyle = ctx.fillStyle; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x, y, 12, 0, Math.PI * 2); ctx.stroke(); }
     ctx.fillStyle = col("--txt"); ctx.font = "bold 13px system-ui"; ctx.textAlign = "center"; ctx.textBaseline = "bottom";
     ctx.fillText(it.nom, x, y - 11);
     ctx.globalAlpha = 1;
   }
 
   // liste
-  liste.sort((a, b) => (a.d ?? 1e9) - (b.d ?? 1e9));
+  liste.sort((a, b) => (a.dAff ?? 1e9) - (b.dAff ?? 1e9));
   const ul = $("liste");
   if (!liste.length) return;
   ul.innerHTML = "";
@@ -352,8 +391,12 @@ function dessiner() {
     let details = "vu il y a " + fmtAge(it.vuS);
     if (it.sansGps) details = "pas encore de GPS · " + details;
     else if (it.ageMin > 0) details = "position d'il y a " + it.ageMin + " min · " + details;
-    const arrow = it.cap != null ? `<div class="arrow" style="transform:rotate(${it.cap - rot}deg)">⬆</div>` : `<div class="arrow">·</div>`;
-    li.innerHTML = `${arrow}<div class="who"><b></b><small></small></div><div class="dist">${it.d != null ? fmtDist(it.d) : (me ? "?" : "…")}</div>`;
+    if (it.sigFrais) details = "signal " + barres(it.sig) + (it.gpsFlou ? " · trop près pour le GPS" : (it.dSig < 30 ? " ≈ " + fmtDist(it.dSig) : "")) + " · " + details;
+    const arrow = it.cap != null
+      ? `<div class="arrow" style="transform:rotate(${it.cap - rot}deg);opacity:${it.gpsFlou ? .3 : 1}">⬆</div>`
+      : `<div class="arrow">·</div>`;
+    const prefixe = (it.dAff != null && (it.gpsFlou || it.d == null)) ? "≈ " : "";
+    li.innerHTML = `${arrow}<div class="who"><b></b><small></small></div><div class="dist">${it.dAff != null ? prefixe + fmtDist(it.dAff) : (me ? "?" : "…")}</div>`;
     li.querySelector("b").textContent = it.nom;
     li.querySelector("small").textContent = details;
     ul.appendChild(li);
