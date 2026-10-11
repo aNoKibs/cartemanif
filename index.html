@@ -169,7 +169,7 @@ if ("geolocation" in navigator) {
 async function envoyerPosition(force) {
   if (!chPos || !me) return;
   const now = Date.now();
-  if (!force && now - dernierEnvoi < 2000) return;
+  if (!force && now - dernierEnvoi < 1000) return;
   dernierEnvoi = now;
   const buf = new ArrayBuffer(16), dv = new DataView(buf);
   dv.setInt32(0, Math.round(me.lat * 1e7), true);
@@ -184,13 +184,40 @@ async function envoyerPosition(force) {
 }
 
 // ---------- Boussole ----------
-function surOrientation(e) {
+// Cap vers lequel pointe le telephone, quelle que soit son inclinaison :
+//  - tenu a plat : direction du HAUT du telephone ;
+//  - tenu debout (comme pour prendre une photo) : direction du DOS du telephone.
+function capDepuisAngles(alpha, beta, gamma) {
+  const d = Math.PI / 180;
+  const cX = Math.cos(beta * d), sX = Math.sin(beta * d);
+  const cY = Math.cos(gamma * d), sY = Math.sin(gamma * d);
+  const cZ = Math.cos(alpha * d), sZ = Math.sin(alpha * d);
+  // axe "haut du telephone" projete a l'horizontale (x = est, y = nord)
+  const hautE = -sZ * cX, hautN = cZ * cX;
+  // axe "dos du telephone" projete a l'horizontale
+  const dosE = -(cZ * sY + sZ * sX * cY), dosN = -(sZ * sY - cZ * sX * cY);
+  // on prend l'axe le plus horizontal des deux (le plus fiable)
+  const useDos = Math.hypot(dosE, dosN) > Math.hypot(hautE, hautN);
+  const [e, n] = useDos ? [dosE, dosN] : [hautE, hautN];
+  return (Math.atan2(e, n) / d + 360) % 360;
+}
+
+let capLisse = null;
+function surOrientation(ev) {
   let h = null;
-  if (typeof e.webkitCompassHeading === "number") h = e.webkitCompassHeading;   // iPhone
-  else if (e.absolute && e.alpha != null) h = 360 - e.alpha;                      // Android
-  if (h == null) return;
-  const ang = (screen.orientation && screen.orientation.angle) || 0;
-  heading = (h + ang + 360) % 360;
+  if (typeof ev.webkitCompassHeading === "number") {
+    h = ev.webkitCompassHeading;                                   // iPhone (Bluefy)
+  } else if (ev.absolute && ev.alpha != null && ev.beta != null && ev.gamma != null) {
+    h = capDepuisAngles(ev.alpha, ev.beta, ev.gamma);             // Android
+    const ang = (screen.orientation && screen.orientation.angle) || 0;
+    h = (h + ang) % 360;
+  }
+  if (h == null || isNaN(h)) return;
+  // lissage pour eviter que le radar tremble
+  if (capLisse == null) capLisse = h;
+  else { let diff = ((h - capLisse + 540) % 360) - 180; capLisse = (capLisse + diff * 0.25 + 360) % 360; }
+  heading = capLisse;
+  setPill($("stCap"), "Boussole : " + Math.round(heading) + "°", "ok");
 }
 
 $("btnCompass").onclick = async () => {
@@ -208,7 +235,7 @@ $("btnCompass").onclick = async () => {
   } else {
     window.removeEventListener("deviceorientationabsolute", surOrientation);
     window.removeEventListener("deviceorientation", surOrientation);
-    heading = null;
+    heading = null; capLisse = null;
   }
   $("btnCompass").classList.toggle("on", compassOn);
   setPill($("stCap"), compassOn ? "Boussole : on" : "Boussole : off (nord en haut)", compassOn ? "ok" : "");
