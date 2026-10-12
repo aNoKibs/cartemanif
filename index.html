@@ -707,25 +707,40 @@ function majBoutonPlan() {
 async function telechargerPlan() {
   if (!me) { alert("Il faut d'abord ta position GPS : autorise la position et attends que « GPS ± … m » s'affiche."); return; }
   const deja = plan ? "Un plan est déjà enregistré (" + new Date(plan.date).toLocaleDateString("fr-FR") + "). Il sera remplacé.\n\n" : "";
-  const choix = prompt(deja + "Télécharger les rues autour de ta position actuelle.\nRayon en km (1 à 5) :", "2");
+  const choix = prompt(deja + "Télécharger les rues autour de ta position actuelle.\nRayon en km (0,5 à 5). Plus c'est grand, plus c'est long :", "1.5");
   if (choix == null) return;
-  const km = Math.min(5, Math.max(0.5, parseFloat(String(choix).replace(",", ".")) || 2));
+  const km = Math.min(5, Math.max(0.5, parseFloat(String(choix).replace(",", ".")) || 1.5));
   const R = Math.round(km * 1000), lat0 = me.lat, lon0 = me.lon;
-  const autour = `(around:${R},${lat0.toFixed(6)},${lon0.toFixed(6)})`;
-  const requete = `[out:json][timeout:90];(
-    way["highway"]["highway"!~"^(proposed|construction|abandoned|razed|platform|raceway|bus_stop|elevator)$"]${autour};
-    way["waterway"~"^(river|canal|riverbank)$"]${autour};
-    way["natural"="water"]${autour};
-    way["leisure"~"^(park|garden)$"]${autour};
+  // un carre plutot qu'un cercle : beaucoup plus rapide a calculer pour le serveur
+  const dLat = R / M_LAT, dLon = R / mLon(lat0);
+  const bb = [lat0 - dLat, lon0 - dLon, lat0 + dLat, lon0 + dLon].map(v => v.toFixed(5)).join(",");
+  const requete = `[out:json][timeout:120][bbox:${bb}];(
+    way["highway"]["highway"!~"^(proposed|construction|abandoned|razed|platform|raceway|bus_stop|elevator|steps|corridor)$"];
+    way["waterway"~"^(river|canal|riverbank)$"];
+    way["natural"="water"];
+    way["leisure"~"^(park|garden)$"];
   );out geom qt;`;
+  // plusieurs serveurs : si l'un est sature, on essaie le suivant
+  const SERVEURS = [
+    "https://overpass-api.de/api/interpreter",
+    "https://overpass.kumi.systems/api/interpreter",
+    "https://overpass.private.coffee/api/interpreter",
+    "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+  ];
   const info = $("radarInfo");
-  info.textContent = "Téléchargement du plan…";
   try {
-    const rep = await fetch("https://overpass-api.de/api/interpreter", {
-      method: "POST", body: "data=" + encodeURIComponent(requete),
-      headers: { "Content-Type": "application/x-www-form-urlencoded" }
-    });
-    if (!rep.ok) throw new Error(rep.status === 429 || rep.status === 504 ? "serveur occupé, réessaie dans une minute" : "erreur " + rep.status);
+    let rep = null, derniere = "";
+    for (let n = 0; n < SERVEURS.length && !rep; n++) {
+      info.textContent = "Téléchargement du plan" + (n ? " (serveur " + (n + 1) + "/" + SERVEURS.length + ")" : "") + "…";
+      try {
+        const r = await fetch(SERVEURS[n], {
+          method: "POST", body: "data=" + encodeURIComponent(requete),
+          headers: { "Content-Type": "application/x-www-form-urlencoded" }
+        });
+        if (r.ok) rep = r; else derniere = "erreur " + r.status;
+      } catch (e) { derniere = e.message || String(e); }
+    }
+    if (!rep) throw new Error("tous les serveurs sont occupés (" + derniere + "). Réessaie dans quelques minutes, ou avec un rayon plus petit");
     info.textContent = "Préparation du plan…";
     const data = await rep.json();
     const kx = mLon(lat0);
