@@ -290,8 +290,20 @@ function recevoir(dv) {
     sig = (sig == null || now - sigVu > 10000) ? rssi : sig * 0.7 + rssi * 0.3;
     sigVu = now;
   }
-  peers.set(id, { nom: nom || "?" + id.slice(-3), lat, lon, sansGps: acc === 255, acc, ageMin, vu: now, sig, sigVu });
+  // point de depart de l'animation = la ou le point est affiche en ce moment
+  const dep = avant && !avant.sansGps ? posAff(avant, now) : { lat, lon };
+  peers.set(id, { nom: nom || "?" + id.slice(-3), lat, lon, deLat: dep.lat, deLon: dep.lon,
+                  sansGps: acc === 255, acc, ageMin, vu: now, sig, sigVu });
   dessiner();
+}
+
+// Position affichee : glisse en 600 ms de l'ancienne a la nouvelle au lieu de sauter
+const GLISSE_MS = 600;
+function posAff(p, now) {
+  const f = Math.min(1, (now - p.vu) / GLISSE_MS);
+  if (f >= 1 || p.deLat == null) return { lat: p.lat, lon: p.lon };
+  const e = 1 - (1 - f) * (1 - f);
+  return { lat: p.deLat + (p.lat - p.deLat) * e, lon: p.deLon + (p.lon - p.deLon) * e };
 }
 
 // ---------- GPS ----------
@@ -304,7 +316,7 @@ if ("geolocation" in navigator) {
     dessiner();
   }, err => {
     setPill($("stGps"), err.code === 1 ? "refusé" : "sans signal", "bad");
-  }, { enableHighAccuracy: true, maximumAge: 2000, timeout: 30000 });
+  }, { enableHighAccuracy: true, maximumAge: 0, timeout: 30000 });
 } else {
   setPill($("stGps"), "indisponible", "bad");
 }
@@ -312,7 +324,7 @@ if ("geolocation" in navigator) {
 async function envoyerPosition(force) {
   if (!chPos || !me) return;
   const now = Date.now();
-  if (!force && now - dernierEnvoi < 1000) return;
+  if (!force && now - dernierEnvoi < 500) return;
   dernierEnvoi = now;
   const buf = new ArrayBuffer(16), dv = new DataView(buf);
   dv.setInt32(0, Math.round(me.lat * 1e7), true);
@@ -482,7 +494,7 @@ function dessiner() {
   for (const [id, p] of peers) {
     const vuS = Math.round((now - p.vu) / 1000);
     const it = { id, ...p, vuS, c: couleur(id) };
-    if (me && !p.sansGps) Object.assign(it, distCap(me, p));
+    if (me && !p.sansGps) Object.assign(it, distCap(me, posAff(p, now)));
     it.sigFrais = p.sig != null && now - p.sigVu < 10000;
     if (it.sigFrais) it.dSig = distSignal(p.sig);
     // trop proches : l'erreur des deux GPS est plus grande que la distance
@@ -850,7 +862,8 @@ function dessinerPlan(cx, cy, Rclip, pxParM, rot, echelle) {
 // boussole active : on redessine plus souvent pour que le plan tourne en douceur
 let dernierDessin = 0;
 (function boucle(t) {
-  if (compassOn && heading != null && document.visibilityState === "visible" && t - dernierDessin > 120) {
+  const anime = [...peers.values()].some(p => Date.now() - p.vu < GLISSE_MS);
+  if ((anime || (compassOn && heading != null)) && document.visibilityState === "visible" && t - dernierDessin > 50) {
     dernierDessin = t; dessiner();
   }
   requestAnimationFrame(boucle);
