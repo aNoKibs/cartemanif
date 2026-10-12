@@ -6,7 +6,6 @@
 <meta name="theme-color" content="#161a33">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.svg">
-<link rel="stylesheet" href="vendor/leaflet.css">
 <title>Radar</title>
 <style>
   @font-face { font-family: "Barlow"; font-weight: 400; font-display: swap; src: url(fonts/barlow-latin-400-normal.woff2) format("woff2"); }
@@ -63,37 +62,14 @@
   .cap { position: absolute; left: 50%; top: 0; transform: translateX(-50%); font: 700 15px/1 var(--cond);
     color: var(--hivis); background: var(--ink); padding: 0 6px; visibility: hidden; }
   .cap.on { visibility: visible; }
+  .radar-info { position: absolute; left: 50%; bottom: 34px; transform: translateX(-50%); background: var(--ink);
+    color: var(--chalk); font-size: 13px; padding: 5px 10px; border-radius: 999px; white-space: nowrap; }
+  .radar-info:empty { display: none; }
 
-  /* ---- choix radar / carte ---- */
-  .vues { display: grid; grid-template-columns: 1fr 1fr; background: var(--plate); border-radius: 999px; padding: 4px; margin-bottom: 12px; }
-  .vues button { border: 0; background: none; border-radius: 999px; padding: 8px; font: 700 18px/1 var(--cond); color: var(--mute); }
-  .vues button[aria-selected="true"] { background: var(--chalk); color: var(--ink); }
-
-  /* ---- carte des rues ---- */
-  .plan { position: relative; width: 100%; aspect-ratio: 4 / 5; border-radius: 20px; overflow: hidden; background: var(--plate); }
-  .plan[hidden] { display: none; }
-  #map { position: absolute; inset: 0; background: var(--plate); }
-  /* tuiles OpenStreetMap passees en sombre pour coller au reste de la page */
-  #map .leaflet-tile-pane { filter: invert(1) hue-rotate(200deg) saturate(.5) brightness(.95) contrast(.9); }
-  #map .leaflet-control-attribution { background: #161a33cc; color: var(--mute); font-size: 10px; }
-  #map .leaflet-control-attribution a { color: var(--chalk); }
-  .perso { position: relative; width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; background: var(--c);
-    color: var(--ink); font: 700 17px/1 var(--cond); box-shadow: 0 0 0 2px var(--ink); }
-  .perso.vieux { background: var(--ink); color: var(--c); box-shadow: inset 0 0 0 3px var(--c), 0 0 0 2px var(--ink); }
-  .perso.perdu { opacity: .45; }
-  .perso b { position: absolute; top: -18px; left: 50%; transform: translateX(-50%); white-space: nowrap;
-    font: 700 15px/1 var(--cond); color: var(--chalk); text-shadow: 0 0 3px var(--ink), 0 0 3px var(--ink), 0 0 3px var(--ink); }
-  .plan-btn { position: absolute; right: 10px; bottom: 26px; z-index: 500; border: 0; border-radius: 999px;
-    background: var(--hivis); color: var(--ink); font: 700 16px/1 var(--cond); padding: 10px 14px; }
-  .plan-btn[hidden] { display: none; }
-  .plan-info { position: absolute; left: 10px; top: 10px; z-index: 500; background: #161a33e6; color: var(--mute);
-    font-size: 13px; padding: 6px 10px; border-radius: 10px; max-width: calc(100% - 70px); }
-  .plan-info:empty { display: none; }
-  #map .leaflet-bar a { background: var(--ink); color: var(--chalk); border-color: var(--rule); }
 
   /* ---- reglages ---- */
   .tools { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 6px; margin: 10px 0 18px; }
-  .tools button { background: var(--plate); border: 0; border-radius: 12px; padding: 9px 4px 8px;
+  .tools button { background: var(--plate); border: 0; border-radius: 12px; padding: 9px 2px 8px; min-width: 0;
     display: grid; justify-items: center; gap: 3px; font-size: 13px; color: var(--mute); }
   .tools svg { width: 22px; height: 22px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
   .tools button[hidden] { display: none; }
@@ -139,21 +115,12 @@
   <input id="nom" maxlength="6" placeholder="NOM" autocomplete="off" autocapitalize="characters" spellcheck="false">
 </div>
 
-<div class="vues" role="tablist">
-  <button id="vRadar" role="tab" aria-selected="true">Radar</button>
-  <button id="vCarte" role="tab" aria-selected="false">Carte</button>
-</div>
-
 <div class="radar" id="paneRadar">
   <canvas id="radar" aria-label="Radar du groupe"></canvas>
   <span class="cap" id="stCap"></span>
+  <span class="radar-info" id="radarInfo"></span>
 </div>
 
-<div class="plan" id="paneCarte" hidden>
-  <div id="map"></div>
-  <div class="plan-info" id="planInfo"></div>
-  <button class="plan-btn" id="btnCentrer" hidden>Me recentrer</button>
-</div>
 
 <div class="tools">
   <button id="btnCompass" aria-pressed="false">
@@ -162,6 +129,8 @@
     <svg viewBox="0 0 24 24"><rect x="7" y="3" width="10" height="18" rx="2"/><path d="M11 18h2"/></svg>Écran on</button>
   <button id="btnZoom">
     <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/></svg><span id="zoomTxt">Zoom auto</span></button>
+  <button id="btnPlan">
+    <svg viewBox="0 0 24 24"><path d="M3 6l6-2 6 2 6-2v14l-6 2-6-2-6 2z"/><path d="M9 4v14M15 6v14"/></svg><span id="planTxt">Plan</span></button>
   <button id="btnCalib">
     <svg viewBox="0 0 24 24"><path d="M4 18h2M9 18v-4M14 18v-8M19 18V6"/></svg>Calibrer</button>
 </div>
@@ -170,7 +139,6 @@
 
 <p class="note">Garde la page ouverte avec « Écran on » : si le téléphone se verrouille, ta position n'est plus mise à jour et les autres voient ta dernière position connue.</p>
 
-<script src="vendor/leaflet.js"></script>
 <script>
 "use strict";
 const SVC   = "6e7a0001-5c3b-4f2a-9d1e-7a2b3c4d5e6f";
@@ -551,16 +519,23 @@ function dessiner() {
   });
   ctx.restore();
 
+  // --- plan des rues (s'il a ete telecharge) ---
+  dessinerPlan(cx, cy, Rmax + 3, Rmax / echelle, rot, echelle);
+
   // --- anneaux de distance ---
-  ctx.strokeStyle = col("--rule"); ctx.lineWidth = 1;
+  ctx.strokeStyle = plan ? "#4a5390" : col("--rule"); ctx.lineWidth = 1;
+  ctx.save(); if (plan) ctx.setLineDash([2, 4]);
   for (let k = 1; k <= 3; k++) {
     ctx.beginPath(); ctx.arc(cx, cy, Rmax * k / 3, 0, Math.PI * 2); ctx.stroke();
   }
+  ctx.restore();
   ctx.fillStyle = col("--mute"); ctx.font = "600 13px " + COND;
   ctx.textAlign = "left"; ctx.textBaseline = "middle";
   for (let k = 1; k <= 3; k++) {
     const r = Rmax * k / 3, a = Math.PI * 0.75;     // etiquettes en bas a droite, a l'ecart
-    ctx.fillText(fmtDist(echelle * k / 3), cx + Math.cos(a - Math.PI / 2) * r + 4, cy + Math.sin(a - Math.PI / 2) * r);
+    const tx = cx + Math.cos(a - Math.PI / 2) * r + 4, ty = cy + Math.sin(a - Math.PI / 2) * r;
+    ctx.lineWidth = 4; ctx.strokeStyle = col("--plate"); ctx.strokeText(fmtDist(echelle * k / 3), tx, ty);
+    ctx.fillText(fmtDist(echelle * k / 3), tx, ty);
   }
 
   // --- moi ---
@@ -606,8 +581,6 @@ function dessiner() {
     }
     ctx.globalAlpha = 1;
   }
-
-  majCarte(liste);
 
   // --- liste ---
   liste.sort((a, b) => (a.dAff ?? 1e9) - (b.dAff ?? 1e9));
@@ -660,91 +633,214 @@ function dessiner() {
   }
 }
 if (document.fonts) document.fonts.ready.then(() => dessiner());
-// ---------- Carte des rues ----------
-// Fond OpenStreetMap. Les rues affichees une fois avec du reseau restent
-// en memoire sur le telephone et s'affichent ensuite sans reseau.
-let carte = null, suivre = true;
-const marqueurs = new Map();
-let moiPoint = null, moiCercle = null;
 
-function initCarte() {
-  if (carte || typeof L === "undefined") return;
-  carte = L.map("map", { zoomControl: true, attributionControl: true, minZoom: 11, maxZoom: 19 });
-  carte.attributionControl.setPrefix(false);
-  carte.zoomControl.setPosition("topright");
-  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
-    maxZoom: 19,
-    attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-  }).addTo(carte);
-  let dep = [48.8566, 2.3522];
-  try { dep = me ? [me.lat, me.lon] : JSON.parse(store.get("derniereVue", "[48.8566,2.3522]")); } catch {}
-  carte.setView(dep, 17);
-  carte.on("dragstart", () => { suivre = false; $("btnCentrer").hidden = false; });
-  carte.on("moveend", () => { const c = carte.getCenter(); store.set("derniereVue", JSON.stringify([c.lat, c.lng])); });
-  $("btnCentrer").onclick = () => {
-    suivre = true; $("btnCentrer").hidden = true;
-    if (me) carte.setView([me.lat, me.lon], Math.max(carte.getZoom(), 16));
-  };
-  window.addEventListener("offline", infoCarte);
-  window.addEventListener("online", infoCarte);
-  infoCarte();
+
+// ---------- Plan des rues hors ligne ----------
+// Telecharge une seule fois (avec du reseau) les rues autour de toi depuis OpenStreetMap
+// (service Overpass), les garde sur le telephone, et les dessine sous le radar.
+let plan = null;   // { lat0, lon0, rayon, date, voies: [{t, n, p:Float32Array, b:[minx,miny,maxx,maxy]}] }
+const M_LAT = 110540;
+const mLon = lat => 111320 * Math.cos(lat * Math.PI / 180);
+
+// stockage (IndexedDB : le plan peut faire quelques Mo)
+function bdd() {
+  return new Promise((ok, ko) => {
+    const r = indexedDB.open("radar", 1);
+    r.onupgradeneeded = () => r.result.createObjectStore("plan");
+    r.onsuccess = () => ok(r.result); r.onerror = () => ko(r.error);
+  });
 }
-function infoCarte() {
-  $("planInfo").textContent = navigator.onLine ? "" : "Hors ligne : seules les rues déjà affichées avant sont visibles.";
+async function bddLire(k) {
+  const db = await bdd();
+  return new Promise((ok, ko) => { const q = db.transaction("plan").objectStore("plan").get(k); q.onsuccess = () => ok(q.result); q.onerror = () => ko(q.error); });
+}
+async function bddEcrire(k, v) {
+  const db = await bdd();
+  return new Promise((ok, ko) => { const t = db.transaction("plan", "readwrite"); t.objectStore("plan").put(v, k); t.oncomplete = ok; t.onerror = () => ko(t.error); });
 }
 
-function majCarte(liste) {
-  if (!carte) return;
-  if (me) {
-    const ll = [me.lat, me.lon];
-    if (!moiPoint) {
-      moiCercle = L.circle(ll, { radius: me.acc, color: "#ffd23f", weight: 1, fillOpacity: .12, interactive: false }).addTo(carte);
-      moiPoint = L.circleMarker(ll, { radius: 9, color: "#161a33", weight: 3, fillColor: "#ffd23f", fillOpacity: 1, interactive: false }).addTo(carte);
-    } else {
-      moiPoint.setLatLng(ll); moiCercle.setLatLng(ll).setRadius(me.acc);
+// type de voie -> style (ordre de dessin : du moins important au plus important)
+function typeVoie(tags) {
+  const h = tags.highway;
+  if (tags.waterway === "river" || tags.waterway === "canal") return "eau";
+  if (tags.natural === "water" || tags.waterway === "riverbank") return "eau-zone";
+  if (tags.leisure === "park" || tags.landuse === "grass" || tags.leisure === "garden") return "parc";
+  if (!h) return null;
+  if (/^(motorway|trunk|primary)(_link)?$/.test(h)) return "grande";
+  if (/^(secondary|tertiary)(_link)?$/.test(h)) return "moyenne";
+  if (/^(footway|path|pedestrian|steps|cycleway|track|bridleway|corridor)$/.test(h)) return "pieton";
+  return "rue";
+}
+const STYLES = {
+  "parc":     { fill: "#22394a" },
+  "eau-zone": { fill: "#1d3768" },
+  "eau":      { stroke: "#2a4f8f", w: 7 },
+  "pieton":   { stroke: "#2f3766", w: 1.2, dash: [3, 3] },
+  "rue":      { stroke: "#3b4580", w: 2.6 },
+  "moyenne":  { stroke: "#4b569a", w: 4 },
+  "grande":   { stroke: "#5b67b0", w: 5.5 },
+};
+const ORDRE = ["parc", "eau-zone", "eau", "pieton", "rue", "moyenne", "grande"];
+
+function preparerPlan(brut) {
+  const voies = brut.voies.map(v => {
+    const p = Float32Array.from(v.p);
+    let a = Infinity, b = Infinity, c = -Infinity, d = -Infinity;
+    for (let i = 0; i < p.length; i += 2) { a = Math.min(a, p[i]); c = Math.max(c, p[i]); b = Math.min(b, p[i + 1]); d = Math.max(d, p[i + 1]); }
+    return { t: v.t, n: v.n, p, b: [a, b, c, d] };
+  });
+  voies.sort((x, y) => ORDRE.indexOf(x.t) - ORDRE.indexOf(y.t));
+  return { ...brut, voies };
+}
+
+async function chargerPlan() {
+  try {
+    const brut = await bddLire("plan");
+    if (brut) { plan = preparerPlan(brut); majBoutonPlan(); dessiner(); }
+  } catch {}
+}
+function majBoutonPlan() {
+  $("btnPlan").classList.toggle("on", !!plan);
+  $("planTxt").textContent = plan ? "Plan " + String(plan.rayon / 1000).replace(".", ",") + " km" : "Plan";
+}
+
+async function telechargerPlan() {
+  if (!me) { alert("Il faut d'abord ta position GPS : autorise la position et attends que « GPS ± … m » s'affiche."); return; }
+  const deja = plan ? "Un plan est déjà enregistré (" + new Date(plan.date).toLocaleDateString("fr-FR") + "). Il sera remplacé.\n\n" : "";
+  const choix = prompt(deja + "Télécharger les rues autour de ta position actuelle.\nRayon en km (1 à 5) :", "2");
+  if (choix == null) return;
+  const km = Math.min(5, Math.max(0.5, parseFloat(String(choix).replace(",", ".")) || 2));
+  const R = Math.round(km * 1000), lat0 = me.lat, lon0 = me.lon;
+  const autour = `(around:${R},${lat0.toFixed(6)},${lon0.toFixed(6)})`;
+  const requete = `[out:json][timeout:90];(
+    way["highway"]["highway"!~"^(proposed|construction|abandoned|razed|platform|raceway|bus_stop|elevator)$"]${autour};
+    way["waterway"~"^(river|canal|riverbank)$"]${autour};
+    way["natural"="water"]${autour};
+    way["leisure"~"^(park|garden)$"]${autour};
+  );out geom qt;`;
+  const info = $("radarInfo");
+  info.textContent = "Téléchargement du plan…";
+  try {
+    const rep = await fetch("https://overpass-api.de/api/interpreter", {
+      method: "POST", body: "data=" + encodeURIComponent(requete),
+      headers: { "Content-Type": "application/x-www-form-urlencoded" }
+    });
+    if (!rep.ok) throw new Error(rep.status === 429 || rep.status === 504 ? "serveur occupé, réessaie dans une minute" : "erreur " + rep.status);
+    info.textContent = "Préparation du plan…";
+    const data = await rep.json();
+    const kx = mLon(lat0);
+    const voies = [];
+    for (const el of data.elements || []) {
+      if (el.type !== "way" || !el.geometry) continue;
+      const t = typeVoie(el.tags || {});
+      if (!t) continue;
+      const p = [];
+      for (const g of el.geometry) p.push(Math.round((g.lon - lon0) * kx * 10) / 10, Math.round((g.lat - lat0) * M_LAT * 10) / 10);
+      const n = (t === "grande" || t === "moyenne" || t === "rue") ? (el.tags.name || "") : "";
+      voies.push({ t, n, p });
     }
-    if (suivre) carte.panTo(ll, { animate: true });
+    if (!voies.length) throw new Error("aucune rue trouvée ici");
+    const brut = { lat0, lon0, rayon: R, date: Date.now(), voies };
+    await bddEcrire("plan", brut);
+    plan = preparerPlan(brut);
+    majBoutonPlan();
+    info.textContent = "Plan enregistré : " + voies.length + " rues";
+    setTimeout(() => { if (info.textContent.startsWith("Plan enregistré")) info.textContent = ""; }, 4000);
+    dessiner();
+  } catch (e) {
+    info.textContent = "";
+    alert("Téléchargement impossible : " + (e.message || e) + (navigator.onLine ? "" : "\nTu es hors ligne : il faut du réseau pour télécharger le plan."));
   }
-  const vus = new Set();
-  for (const it of liste) {
-    if (it.sansGps) continue;
-    vus.add(it.id);
-    const cls = "perso" + (it.vieux ? " vieux" : "") + (it.perdu ? " perdu" : "");
-    const cle = cls + it.c + it.nom;
-    let m = marqueurs.get(it.id);
-    if (!m) {
-      m = L.marker([it.lat, it.lon], { keyboard: false }).addTo(carte);
-      marqueurs.set(it.id, m);
-    } else {
-      m.setLatLng([it.lat, it.lon]);
+}
+$("btnPlan").onclick = telechargerPlan;
+
+// Dessine les rues : position de chaque point par rapport a moi, en metres, puis en pixels
+function dessinerPlan(cx, cy, Rclip, pxParM, rot, echelle) {
+  if (!plan || !me) return;
+  const kx = mLon(plan.lat0);
+  const mx = (me.lon - plan.lon0) * kx, my = (me.lat - plan.lat0) * M_LAT;
+  const vue = Rclip / pxParM;                 // demi-largeur visible en metres
+  const a = rot * Math.PI / 180, co = Math.cos(a), si = Math.sin(a);   // le plan tourne avec la boussole
+  const loin = echelle >= 900, tresLoin = echelle >= 1500;
+
+  // hors de la zone telechargee
+  if (Math.hypot(mx, my) > plan.rayon + vue) {
+    $("radarInfo").textContent = $("radarInfo").textContent || "Tu es hors de la zone du plan";
+    return;
+  } else if ($("radarInfo").textContent === "Tu es hors de la zone du plan") $("radarInfo").textContent = "";
+
+  ctx.save();
+  ctx.beginPath(); ctx.arc(cx, cy, Rclip, 0, Math.PI * 2); ctx.clip();
+  ctx.lineCap = "round"; ctx.lineJoin = "round";
+  const etiquettes = [];
+  let typeCourant = null;
+
+  for (const v of plan.voies) {
+    const b = v.b;
+    if (b[2] < mx - vue || b[0] > mx + vue || b[3] < my - vue || b[1] > my + vue) continue;
+    if (loin && v.t === "pieton") continue;
+    if (tresLoin && v.t === "rue") continue;
+    const st = STYLES[v.t];
+    if (v.t !== typeCourant) {
+      typeCourant = v.t;
+      ctx.setLineDash(st.dash || []);
+      if (st.stroke) { ctx.strokeStyle = st.stroke; ctx.lineWidth = Math.max(1, st.w * Math.min(1.4, 120 / echelle + .45)); }
+      if (st.fill) ctx.fillStyle = st.fill;
     }
-    if (m._cle !== cle) {
-      const html = document.createElement("div");
-      html.className = cls; html.style.setProperty("--c", it.c);
-      html.textContent = it.nom.charAt(0);
-      const b = document.createElement("b"); b.textContent = it.nom; html.appendChild(b);
-      m.setIcon(L.divIcon({ className: "", iconSize: [30, 30], iconAnchor: [15, 15], html }));
-      m._cle = cle;
+    const p = v.p;
+    ctx.beginPath();
+    for (let i = 0; i < p.length; i += 2) {
+      const dx = p[i] - mx, dy = p[i + 1] - my;
+      const x = cx + (dx * co - dy * si) * pxParM, y = cy - (dx * si + dy * co) * pxParM;
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    if (st.fill) ctx.fill(); else ctx.stroke();
+
+    // noms des rues quand on est assez zoome : on cherche un bout de rue visible assez long pour le nom
+    if (v.n && echelle <= 300 && etiquettes.length < 25) {
+      const larg = v.n.length * 6 + 12;
+      trouve:
+      for (let i = 0; i < p.length - 2; i += 2) {
+        const sx = p[i + 2] - p[i], sy = p[i + 3] - p[i + 1];
+        const lpx = Math.hypot(sx, sy) * pxParM;
+        if (lpx < larg) continue;
+        const nb = Math.max(1, Math.floor(lpx / 110));
+        for (let k = 0; k < nb; k++) {
+          const f = (k + .5) / nb;
+          const ex = p[i] + sx * f - mx, ey = p[i + 1] + sy * f - my;
+          const x = cx + (ex * co - ey * si) * pxParM, y = cy - (ex * si + ey * co) * pxParM;
+          const dc = Math.hypot(x - cx, y - cy);
+          if (dc > Rclip - larg / 2 - 4 || dc < 26) continue;
+          if (etiquettes.some(e => Math.hypot(e.x - x, e.y - y) < 70)) continue;
+          let ang = -Math.atan2(sx * si + sy * co, sx * co - sy * si);
+          if (ang > Math.PI / 2) ang -= Math.PI; if (ang < -Math.PI / 2) ang += Math.PI;
+          etiquettes.push({ x, y, ang, n: v.n });
+          break trouve;
+        }
+      }
     }
   }
-  for (const [id, m] of marqueurs) if (!vus.has(id)) { m.remove(); marqueurs.delete(id); }
+  ctx.setLineDash([]);
+  ctx.font = "600 12px " + '"Barlow Condensed", "Arial Narrow", sans-serif';
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  for (const e of etiquettes) {
+    ctx.save(); ctx.translate(e.x, e.y); ctx.rotate(e.ang);
+    ctx.lineWidth = 3; ctx.strokeStyle = "#20264a"; ctx.strokeText(e.n, 0, 0);
+    ctx.fillStyle = "#a9aed4"; ctx.fillText(e.n, 0, 0);
+    ctx.restore();
+  }
+  ctx.restore();
 }
 
-function choisirVue(v) {
-  const estCarte = v === "carte";
-  $("paneRadar").hidden = estCarte; $("paneCarte").hidden = !estCarte;
-  $("vRadar").setAttribute("aria-selected", String(!estCarte));
-  $("vCarte").setAttribute("aria-selected", String(estCarte));
-  $("btnZoom").hidden = estCarte;
-  store.set("vue", v);
-  if (estCarte) {
-    initCarte();
-    setTimeout(() => { if (carte) carte.invalidateSize(); dessiner(); }, 0);
-  } else dessiner();
-}
-$("vRadar").onclick = () => choisirVue("radar");
-$("vCarte").onclick = () => choisirVue("carte");
-if (store.get("vue", "radar") === "carte") choisirVue("carte");
+// boussole active : on redessine plus souvent pour que le plan tourne en douceur
+let dernierDessin = 0;
+(function boucle(t) {
+  if (compassOn && heading != null && document.visibilityState === "visible" && t - dernierDessin > 120) {
+    dernierDessin = t; dessiner();
+  }
+  requestAnimationFrame(boucle);
+})(0);
+chargerPlan();
 
 window.addEventListener("resize", dessiner);
 setInterval(dessiner, 1000);
