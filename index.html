@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#161a33">
+<meta name="referrer" content="no-referrer">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.svg">
 <title>Radar</title>
@@ -594,24 +595,60 @@ function dessiner() {
     ctx.globalAlpha = 1;
   }
 
-  // --- liste ---
+  // --- liste : on met a jour les lignes en place (pas de reconstruction, moins de batterie) ---
+  const tL = performance.now();
+  if (tL - dernierListe < 200) return;
+  dernierListe = tL;
+  majListe(liste, rot);
+}
+
+let dernierListe = 0;
+const lignes = new Map();   // id -> <li>
+function poser(el, prop, val) { if (el["_" + prop] !== val) { el["_" + prop] = val; el[prop] = val; } }
+
+function majListe(liste, rot) {
   liste.sort((a, b) => (a.dAff ?? 1e9) - (b.dAff ?? 1e9));
   const ul = $("liste");
-  ul.innerHTML = "";
+  let vide = $("listeVide");
+  if (!vide) {
+    vide = document.createElement("li"); vide.id = "listeVide"; vide.className = "vide";
+    vide.innerHTML = "<b></b><span></span>";
+  }
   if (!liste.length) {
-    const li = document.createElement("li");
-    li.className = "vide";
-    li.innerHTML = device && device.gatt && device.gatt.connected
-      ? "<b>Personne en vue</b>Dès qu'une autre carte du groupe est à portée, elle apparaît ici."
-      : "<b>Connecte ta carte</b>Allume ta carte, puis appuie sur « Connecter ma carte » en haut.";
-    ul.appendChild(li);
+    const connecte = device && device.gatt && device.gatt.connected;
+    poser(vide.firstChild, "textContent", connecte ? "Personne en vue" : "Connecte ta carte");
+    poser(vide.lastChild, "textContent", connecte
+      ? "Dès qu'une autre carte du groupe est à portée, elle apparaît ici."
+      : "Allume ta carte, puis appuie sur « Connecter ma carte » en haut.");
+    for (const [id, li] of lignes) { li.remove(); lignes.delete(id); }
+    if (vide.parentNode !== ul) ul.appendChild(vide);
     return;
   }
+  if (vide.parentNode) vide.remove();
+
+  const vus = new Set();
+  let prec = null;
   for (const it of liste) {
-    const li = document.createElement("li");
+    vus.add(it.id);
+    let li = lignes.get(it.id);
+    if (!li) {
+      li = document.createElement("li");
+      li.innerHTML = '<span class="pastille"></span><div><div class="nom"></div><div class="info"><span class="barres" title="Signal radio direct"><i></i><i></i><i></i><i></i></span><span class="quand"></span></div></div><div class="droite"><span class="dist"><span class="v"></span><small></small></span><svg class="fleche" viewBox="0 0 24 24"><path d="M12 2l7 18-7-4-7 4z"/></svg></div>';
+      li.q = {
+        pastille: li.querySelector(".pastille"), nom: li.querySelector(".nom"), quand: li.querySelector(".quand"),
+        barres: li.querySelector(".barres"), bars: li.querySelectorAll(".barres i"), dv: li.querySelector(".dist .v"), du: li.querySelector(".dist small"), fleche: li.querySelector(".fleche"), ang: 0
+      };
+      lignes.set(it.id, li);
+    }
+    // l'ordre : on ne deplace une ligne que si elle n'est pas deja a la bonne place
+    const attendu = prec ? prec.nextSibling : ul.firstChild;
+    if (li !== attendu) ul.insertBefore(li, attendu);
+    prec = li;
+
+    const q = li.q;
     li.style.setProperty("--c", it.c);
-    if (it.vieux) li.classList.add("vieux");
-    if (it.perdu) li.classList.add("perdu");
+    li.classList.toggle("vieux", !!it.vieux);
+    li.classList.toggle("perdu", !!it.perdu);
 
     let info;
     if (it.sansGps) info = "pas encore de position";
@@ -619,30 +656,33 @@ function dessiner() {
     else if (it.ageMin > 0) info = "position d'il y a " + it.ageMin + " min";
     else info = it.vuS < 5 ? "à l'instant" : "il y a " + fmtAge(it.vuS);
     if (it.perdu) info = "plus de nouvelles depuis " + fmtAge(it.vuS);
+    poser(q.pastille, "textContent", it.nom.charAt(0));
+    poser(q.nom, "textContent", it.nom);
+    poser(q.quand, "textContent", info);
 
-    let barresHtml = "";
+    q.barres.style.display = it.sigFrais ? "" : "none";
     if (it.sigFrais) {
       const n = it.sig > -55 ? 4 : it.sig > -67 ? 3 : it.sig > -78 ? 2 : it.sig > -88 ? 1 : 0;
-      barresHtml = `<span class="barres" title="Signal radio direct">${[0, 1, 2, 3].map(k => `<i class="${k < n ? "on" : ""}"></i>`).join("")}</span>`;
+      q.bars.forEach((b, k) => b.classList.toggle("on", k < n));
     }
 
-    let distHtml = "";
     if (it.dAff != null) {
-      const txt = fmtDist(it.dAff), [v, u] = txt.split(" ");
-      distHtml = `<span class="dist">${(it.gpsFlou || it.d == null) ? "~" : ""}${v}<small>${u}</small></span>`;
-    } else {
-      distHtml = `<span class="dist">${me ? "?" : "…"}</span>`;
-    }
-    const fleche = it.cap != null
-      ? `<svg class="fleche${it.gpsFlou ? " flou" : ""}" viewBox="0 0 24 24" style="transform:rotate(${it.cap - rot}deg)"><path d="M12 2l7 18-7-4-7 4z"/></svg>`
-      : `<span class="fleche"></span>`;
+      const [v, u] = fmtDist(it.dAff).split(" ");
+      poser(q.dv, "textContent", ((it.gpsFlou || it.d == null) ? "~" : "") + v);
+      poser(q.du, "textContent", u);
+    } else { poser(q.dv, "textContent", me ? "?" : "…"); poser(q.du, "textContent", ""); }
 
-    li.innerHTML = `<span class="pastille"></span><div><div class="nom"></div><div class="info">${barresHtml}<span class="quand"></span></div></div><div class="droite">${distHtml}${fleche}</div>`;
-    li.querySelector(".pastille").textContent = it.nom.charAt(0);
-    li.querySelector(".nom").textContent = it.nom;
-    li.querySelector(".quand").textContent = info;
-    ul.appendChild(li);
+    q.fleche.style.visibility = it.cap != null ? "visible" : "hidden";
+    q.fleche.classList.toggle("flou", !!it.gpsFlou);
+    if (it.cap != null) {
+      // angle continu : evite le tour complet quand on passe de 359 a 1 degre
+      let cible = it.cap - rot;
+      let d = ((cible - q.ang) % 360 + 540) % 360 - 180;
+      q.ang += d;
+      q.fleche.style.transform = "rotate(" + q.ang.toFixed(1) + "deg)";
+    }
   }
+  for (const [id, li] of lignes) if (!vus.has(id)) { li.remove(); lignes.delete(id); }
 }
 if (document.fonts) document.fonts.ready.then(() => dessiner());
 
@@ -708,21 +748,26 @@ function preparerPlan(brut) {
 async function chargerPlan() {
   try {
     const brut = await bddLire("plan");
-    if (brut) { plan = preparerPlan(brut); majBoutonPlan(); dessiner(); }
+    if (brut) { plan = preparerPlan(brut); versionPlan++; majBoutonPlan(); dessiner(); }
   } catch {}
 }
 function majBoutonPlan() {
   $("btnPlan").classList.toggle("on", !!plan);
-  $("planTxt").textContent = plan ? "Plan " + String(plan.rayon / 1000).replace(".", ",") + " km" : "Plan";
+  $("planTxt").textContent = plan ? "Plan " + String(plan.km || plan.rayon / 1000).replace(".", ",") + " km" : "Plan";
 }
 
 async function telechargerPlan() {
   if (!me) { alert("Il faut d'abord ta position GPS : autorise la position et attends que « GPS ± … m » s'affiche."); return; }
   const deja = plan ? "Un plan est déjà enregistré (" + new Date(plan.date).toLocaleDateString("fr-FR") + "). Il sera remplacé.\n\n" : "";
-  const choix = prompt(deja + "Télécharger les rues autour de ta position actuelle.\nRayon en km (0,5 à 5). Plus c'est grand, plus c'est long :", "1.5");
+  const choix = prompt(deja + "Télécharger les rues autour de toi.\n\nConfidentialité : le serveur OpenStreetMap saura que tu es dans ce quartier (précision ~1 km), pas où tu es exactement. Fais-le plutôt depuis chez toi ou en wifi de confiance, pas sur place.\n\nRayon en km (0,5 à 5) :", "1.5");
   if (choix == null) return;
   const km = Math.min(5, Math.max(0.5, parseFloat(String(choix).replace(",", ".")) || 1.5));
-  const R = Math.round(km * 1000), lat0 = me.lat, lon0 = me.lon;
+  // On ne demande pas un carre centre sur toi (ca donnerait ta position exacte au serveur) :
+  // le centre est arrondi a une grille d'environ 1 km, et le rayon est agrandi de l'ecart
+  // pour que la zone que tu as demandee soit quand meme entierement couverte.
+  const lat0 = Math.round(me.lat / 0.01) * 0.01, lon0 = Math.round(me.lon / 0.01) * 0.01;
+  const ecart = Math.hypot((me.lat - lat0) * M_LAT, (me.lon - lon0) * mLon(lat0));
+  const R = Math.round(km * 1000) + Math.ceil(ecart / 100) * 100;
   // un carre plutot qu'un cercle : beaucoup plus rapide a calculer pour le serveur
   const dLat = R / M_LAT, dLon = R / mLon(lat0);
   const bb = [lat0 - dLat, lon0 - dLon, lat0 + dLat, lon0 + dLon].map(v => v.toFixed(5)).join(",");
@@ -737,7 +782,6 @@ async function telechargerPlan() {
     "https://overpass-api.de/api/interpreter",
     "https://overpass.kumi.systems/api/interpreter",
     "https://overpass.private.coffee/api/interpreter",
-    "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
   ];
   const info = $("radarInfo");
   try {
@@ -747,7 +791,8 @@ async function telechargerPlan() {
       try {
         const r = await fetch(SERVEURS[n], {
           method: "POST", body: "data=" + encodeURIComponent(requete),
-          headers: { "Content-Type": "application/x-www-form-urlencoded" }
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          referrerPolicy: "no-referrer", credentials: "omit", cache: "no-store"
         });
         if (r.ok) rep = r; else derniere = "erreur " + r.status;
       } catch (e) { derniere = e.message || String(e); }
@@ -767,9 +812,9 @@ async function telechargerPlan() {
       voies.push({ t, n, p });
     }
     if (!voies.length) throw new Error("aucune rue trouvée ici");
-    const brut = { lat0, lon0, rayon: R, date: Date.now(), voies };
+    const brut = { lat0, lon0, rayon: R, km, date: Date.now(), voies };
     await bddEcrire("plan", brut);
-    plan = preparerPlan(brut);
+    plan = preparerPlan(brut); versionPlan++; couche.cle = "";
     majBoutonPlan();
     info.textContent = "Plan enregistré : " + voies.length + " rues";
     setTimeout(() => { if (info.textContent.startsWith("Plan enregistré")) info.textContent = ""; }, 4000);
@@ -781,14 +826,75 @@ async function telechargerPlan() {
 }
 $("btnPlan").onclick = telechargerPlan;
 
-// Dessine les rues : position de chaque point par rapport a moi, en metres, puis en pixels
+// Dessine les rues. Le plan est dessine UNE fois sur une image (orientee nord en haut, un peu plus
+// grande que l'ecran), puis seulement tournee/deplacee a chaque image : beaucoup moins de calcul,
+// donc moins de batterie. L'image est refaite quand on s'eloigne de son centre, ou si l'echelle change.
+let versionPlan = 0;
+const couche = { cv: document.createElement("canvas"), cle: "", cxm: 0, cym: 0, etiq: [] };
+const MARGE = 48;   // px de marge autour de la zone visible
+
+function fabriquerCouche(Rclip, s, echelle, mx, my, dpr) {
+  const H = Rclip + MARGE, S = Math.ceil(H * 2);
+  const c = couche.cv;
+  if (c.width !== Math.round(S * dpr)) { c.width = Math.round(S * dpr); c.height = Math.round(S * dpr); }
+  const g = c.getContext("2d");
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, S, S);
+  couche.cxm = mx; couche.cym = my; couche.S = S;
+  const demi = (S / 2) / s;                   // demi-largeur de l'image, en metres
+  const loin = echelle >= 900, tresLoin = echelle >= 1500;
+  g.lineCap = "round"; g.lineJoin = "round";
+  const etiq = [];
+  let typeCourant = null;
+  for (const v of plan.voies) {
+    const b = v.b;
+    if (b[2] < mx - demi || b[0] > mx + demi || b[3] < my - demi || b[1] > my + demi) continue;
+    if (loin && v.t === "pieton") continue;
+    if (tresLoin && v.t === "rue") continue;
+    const st = STYLES[v.t];
+    if (v.t !== typeCourant) {
+      typeCourant = v.t;
+      g.setLineDash(st.dash || []);
+      if (st.stroke) { g.strokeStyle = st.stroke; g.lineWidth = Math.max(1, st.w * Math.min(1.4, 120 / echelle + .45)); }
+      if (st.fill) g.fillStyle = st.fill;
+    }
+    const p = v.p;
+    g.beginPath();
+    for (let i = 0; i < p.length; i += 2) {
+      const x = S / 2 + (p[i] - mx) * s, y = S / 2 - (p[i + 1] - my) * s;
+      if (i === 0) g.moveTo(x, y); else g.lineTo(x, y);
+    }
+    if (st.fill) g.fill(); else g.stroke();
+
+    // candidats pour les noms de rues (affiches plus tard, bien lisibles, selon la rotation)
+    if (v.n && echelle <= 300 && etiq.length < 40) {
+      const larg = v.n.length * 6 + 12;
+      trouve:
+      for (let i = 0; i < p.length - 2; i += 2) {
+        const sx = p[i + 2] - p[i], sy = p[i + 3] - p[i + 1];
+        const lpx = Math.hypot(sx, sy) * s;
+        if (lpx < larg) continue;
+        const nb = Math.max(1, Math.floor(lpx / 110));
+        for (let k = 0; k < nb; k++) {
+          const f = (k + .5) / nb, ex = p[i] + sx * f, ey = p[i + 1] + sy * f;
+          const px = S / 2 + (ex - mx) * s, py = S / 2 - (ey - my) * s;
+          if (Math.hypot(px - S / 2, py - S / 2) > Rclip - larg / 2) continue;   // hors de la zone utile
+          if (etiq.some(e => Math.hypot(e.px - px, e.py - py) < 70)) continue;
+          etiq.push({ px, py, ex, ey, a0: -Math.atan2(sy, sx), n: v.n, larg });
+          break trouve;
+        }
+      }
+    }
+  }
+  g.setLineDash([]);
+  couche.etiq = etiq;
+}
+
 function dessinerPlan(cx, cy, Rclip, pxParM, rot, echelle) {
   if (!plan || !me) return;
   const kx = mLon(plan.lat0);
   const mx = (me.lon - plan.lon0) * kx, my = (me.lat - plan.lat0) * M_LAT;
   const vue = Rclip / pxParM;                 // demi-largeur visible en metres
-  const a = rot * Math.PI / 180, co = Math.cos(a), si = Math.sin(a);   // le plan tourne avec la boussole
-  const loin = echelle >= 900, tresLoin = echelle >= 1500;
 
   // hors de la zone telechargee
   if (Math.hypot(mx, my) > plan.rayon + vue) {
@@ -796,62 +902,40 @@ function dessinerPlan(cx, cy, Rclip, pxParM, rot, echelle) {
     return;
   } else if ($("radarInfo").textContent === "Tu es hors de la zone du plan") $("radarInfo").textContent = "";
 
+  const dpr = window.devicePixelRatio || 1;
+  const cle = [versionPlan, echelle, Math.round(Rclip), dpr].join("|");
+  const u = (couche.cxm - mx) * pxParM, v = -(couche.cym - my) * pxParM;   // decalage de l'image par rapport a moi
+  if (couche.cle !== cle || Math.hypot(u, v) > MARGE * .85) {
+    fabriquerCouche(Rclip, pxParM, echelle, mx, my, dpr);
+    couche.cle = cle;
+    return dessinerPlan(cx, cy, Rclip, pxParM, rot, echelle);
+  }
+
+  const a = rot * Math.PI / 180;
   ctx.save();
   ctx.beginPath(); ctx.arc(cx, cy, Rclip, 0, Math.PI * 2); ctx.clip();
-  ctx.lineCap = "round"; ctx.lineJoin = "round";
-  const etiquettes = [];
-  let typeCourant = null;
+  ctx.translate(cx, cy); ctx.rotate(-a);      // le plan tourne avec la boussole
+  ctx.drawImage(couche.cv, u - couche.S / 2, v - couche.S / 2, couche.S, couche.S);
+  ctx.restore();
 
-  for (const v of plan.voies) {
-    const b = v.b;
-    if (b[2] < mx - vue || b[0] > mx + vue || b[3] < my - vue || b[1] > my + vue) continue;
-    if (loin && v.t === "pieton") continue;
-    if (tresLoin && v.t === "rue") continue;
-    const st = STYLES[v.t];
-    if (v.t !== typeCourant) {
-      typeCourant = v.t;
-      ctx.setLineDash(st.dash || []);
-      if (st.stroke) { ctx.strokeStyle = st.stroke; ctx.lineWidth = Math.max(1, st.w * Math.min(1.4, 120 / echelle + .45)); }
-      if (st.fill) ctx.fillStyle = st.fill;
-    }
-    const p = v.p;
-    ctx.beginPath();
-    for (let i = 0; i < p.length; i += 2) {
-      const dx = p[i] - mx, dy = p[i + 1] - my;
-      const x = cx + (dx * co - dy * si) * pxParM, y = cy - (dx * si + dy * co) * pxParM;
-      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-    }
-    if (st.fill) ctx.fill(); else ctx.stroke();
-
-    // noms des rues quand on est assez zoome : on cherche un bout de rue visible assez long pour le nom
-    if (v.n && echelle <= 300 && etiquettes.length < 25) {
-      const larg = v.n.length * 6 + 12;
-      trouve:
-      for (let i = 0; i < p.length - 2; i += 2) {
-        const sx = p[i + 2] - p[i], sy = p[i + 3] - p[i + 1];
-        const lpx = Math.hypot(sx, sy) * pxParM;
-        if (lpx < larg) continue;
-        const nb = Math.max(1, Math.floor(lpx / 110));
-        for (let k = 0; k < nb; k++) {
-          const f = (k + .5) / nb;
-          const ex = p[i] + sx * f - mx, ey = p[i + 1] + sy * f - my;
-          const x = cx + (ex * co - ey * si) * pxParM, y = cy - (ex * si + ey * co) * pxParM;
-          const dc = Math.hypot(x - cx, y - cy);
-          if (dc > Rclip - larg / 2 - 4 || dc < 26) continue;
-          if (etiquettes.some(e => Math.hypot(e.x - x, e.y - y) < 70)) continue;
-          let ang = -Math.atan2(sx * si + sy * co, sx * co - sy * si);
-          if (ang > Math.PI / 2) ang -= Math.PI; if (ang < -Math.PI / 2) ang += Math.PI;
-          etiquettes.push({ x, y, ang, n: v.n });
-          break trouve;
-        }
-      }
-    }
-  }
-  ctx.setLineDash([]);
+  // noms de rues
+  const co = Math.cos(a), si = Math.sin(a);
+  ctx.save();
   ctx.font = "600 12px " + '"Barlow Condensed", "Arial Narrow", sans-serif';
   ctx.textAlign = "center"; ctx.textBaseline = "middle";
-  for (const e of etiquettes) {
-    ctx.save(); ctx.translate(e.x, e.y); ctx.rotate(e.ang);
+  const posees = [];
+  for (const e of couche.etiq) {
+    if (posees.length >= 25) break;
+    const dx = e.ex - mx, dy = e.ey - my;
+    const x = cx + (dx * co - dy * si) * pxParM, y = cy - (dx * si + dy * co) * pxParM;
+    const dc = Math.hypot(x - cx, y - cy);
+    if (dc > Rclip - e.larg / 2 - 4 || dc < 26) continue;
+    if (posees.some(q => Math.hypot(q.x - x, q.y - y) < 70)) continue;
+    let ang = e.a0 - a;
+    ang = Math.atan2(Math.sin(ang), Math.cos(ang));
+    if (ang > Math.PI / 2) ang -= Math.PI; if (ang < -Math.PI / 2) ang += Math.PI;
+    posees.push({ x, y });
+    ctx.save(); ctx.translate(x, y); ctx.rotate(ang);
     ctx.lineWidth = 3; ctx.strokeStyle = "#20264a"; ctx.strokeText(e.n, 0, 0);
     ctx.fillStyle = "#a9aed4"; ctx.fillText(e.n, 0, 0);
     ctx.restore();

@@ -1,6 +1,6 @@
 // Garde la page en memoire pour qu'elle marche sans reseau pendant la manif.
 // (Le plan des rues, lui, est enregistre a part par la page, dans IndexedDB.)
-const CACHE = "radar-v8";
+const CACHE = "radar-v9";
 const FICHIERS = ["./", "./index.html", "./manifest.webmanifest", "./icon.svg",
   "./fonts/barlow-latin-400-normal.woff2", "./fonts/barlow-latin-600-normal.woff2",
   "./fonts/barlow-condensed-latin-600-normal.woff2", "./fonts/barlow-condensed-latin-700-normal.woff2"];
