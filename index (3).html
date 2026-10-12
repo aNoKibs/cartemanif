@@ -1,0 +1,869 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#161a33">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg">
+<title>Radar</title>
+<style>
+  @font-face { font-family: "Barlow"; font-weight: 400; font-display: swap; src: url(fonts/barlow-latin-400-normal.woff2) format("woff2"); }
+  @font-face { font-family: "Barlow"; font-weight: 600; font-display: swap; src: url(fonts/barlow-latin-600-normal.woff2) format("woff2"); }
+  @font-face { font-family: "Barlow Condensed"; font-weight: 600; font-display: swap; src: url(fonts/barlow-condensed-latin-600-normal.woff2) format("woff2"); }
+  @font-face { font-family: "Barlow Condensed"; font-weight: 700; font-display: swap; src: url(fonts/barlow-condensed-latin-700-normal.woff2) format("woff2"); }
+
+  :root {
+    --ink: #161a33;      /* fond */
+    --plate: #20264a;    /* surfaces */
+    --rule: #353d6e;     /* traits */
+    --chalk: #f2f0e6;    /* texte */
+    --mute: #9ba0c4;     /* texte secondaire */
+    --hivis: #ffd23f;    /* moi, actions */
+    --alert: #ff5a4e;    /* nord, problemes */
+    --cond: "Barlow Condensed", "Arial Narrow", system-ui, sans-serif;
+    --body: "Barlow", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html { background: var(--ink); color: var(--chalk); -webkit-tap-highlight-color: transparent; }
+  body { margin: 0 auto; max-width: 520px; min-height: 100dvh; font: 16px/1.4 var(--body);
+    padding: calc(10px + env(safe-area-inset-top)) 16px calc(24px + env(safe-area-inset-bottom)); }
+  button, input { font: inherit; color: inherit; }
+  button { cursor: pointer; }
+  :focus-visible { outline: 3px solid var(--hivis); outline-offset: 2px; }
+
+  /* ---- barre du haut ---- */
+  .bar { display: flex; align-items: center; gap: 10px; min-height: 48px; }
+  .carte { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; padding: 0; border: 0; background: none; text-align: left; }
+  .carte .led { width: 10px; height: 10px; border-radius: 50%; flex: none; background: var(--mute); }
+  .carte .txt { font: 600 18px/1.1 var(--cond); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .carte[data-state="ok"] .led { background: #5be3a0; box-shadow: 0 0 0 4px #5be3a033; }
+  .carte[data-state="warn"] .led { background: var(--hivis); animation: pulse 1.2s ease-in-out infinite; }
+  .carte[data-state="bad"] .led { background: var(--alert); }
+  .carte.action { flex: none; background: var(--hivis); color: var(--ink); border-radius: 999px; padding: 10px 18px 10px 14px; }
+  .carte.action .led { background: var(--ink); box-shadow: none; animation: none; }
+  .carte.action .txt { font-weight: 700; }
+  .gps { font: 600 17px/1 var(--cond); color: var(--mute); white-space: nowrap; margin-left: auto; }
+  .gps[data-state="ok"] { color: var(--chalk); }
+  .gps[data-state="bad"] { color: var(--alert); }
+  @keyframes pulse { 50% { opacity: .35; } }
+
+  .moi { display: flex; align-items: center; gap: 10px; margin: 2px 0 12px; color: var(--mute); font-size: 15px; }
+  .moi label { white-space: nowrap; }
+  .moi input { width: 9ch; background: transparent; border: 0; border-bottom: 2px solid var(--rule);
+    padding: 2px 0; font: 700 22px/1 var(--cond); letter-spacing: .04em; color: var(--hivis); text-transform: uppercase; border-radius: 0; }
+  .moi input::placeholder { color: var(--rule); }
+  .moi input:focus { outline: none; border-bottom-color: var(--hivis); }
+
+  /* ---- radar ---- */
+  .radar { position: relative; aspect-ratio: 1; width: 100%; }
+  .radar[hidden] { display: none; }
+  .radar canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  .cap { position: absolute; left: 50%; top: 0; transform: translateX(-50%); font: 700 15px/1 var(--cond);
+    color: var(--hivis); background: var(--ink); padding: 0 6px; visibility: hidden; }
+  .cap.on { visibility: visible; }
+  .radar-info { position: absolute; left: 50%; bottom: 34px; transform: translateX(-50%); background: var(--ink);
+    color: var(--chalk); font-size: 13px; padding: 5px 10px; border-radius: 999px; white-space: nowrap; }
+  .radar-info:empty { display: none; }
+
+
+  /* ---- reglages ---- */
+  .tools { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 6px; margin: 10px 0 18px; }
+  .tools button { background: var(--plate); border: 0; border-radius: 12px; padding: 9px 2px 8px; min-width: 0;
+    display: grid; justify-items: center; gap: 3px; font-size: 13px; color: var(--mute); }
+  .tools svg { width: 22px; height: 22px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  .tools button[hidden] { display: none; }
+  .tools button.on { color: var(--ink); background: var(--hivis); }
+
+  /* ---- liste des gens ---- */
+  #liste { list-style: none; margin: 0; padding: 0; }
+  #liste li { display: grid; grid-template-columns: 40px 1fr auto; align-items: center; gap: 12px;
+    padding: 12px 0; border-top: 1px solid var(--rule); }
+  #liste li:last-child { border-bottom: 1px solid var(--rule); }
+  .pastille { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center;
+    font: 700 20px/1 var(--cond); color: var(--ink); background: var(--c); }
+  .vieux .pastille { background: transparent; color: var(--c); box-shadow: inset 0 0 0 3px var(--c); }
+  .perdu { opacity: .45; }
+  .nom { font: 700 24px/1 var(--cond); letter-spacing: .03em; }
+  .info { color: var(--mute); font-size: 14px; margin-top: 3px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .barres { display: inline-flex; align-items: flex-end; gap: 2px; height: 12px; }
+  .barres i { width: 3px; background: var(--rule); border-radius: 1px; }
+  .barres i.on { background: var(--chalk); }
+  .barres i:nth-child(1) { height: 4px; } .barres i:nth-child(2) { height: 7px; }
+  .barres i:nth-child(3) { height: 10px; } .barres i:nth-child(4) { height: 12px; }
+  .droite { display: flex; align-items: center; gap: 8px; }
+  .dist { font: 700 30px/1 var(--cond); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .dist small { font-size: 18px; font-weight: 600; color: var(--mute); margin-left: 2px; }
+  .fleche { width: 26px; height: 26px; transition: transform .35s ease; }
+  .fleche path { fill: var(--chalk); }
+  .fleche.flou path { fill: var(--rule); }
+  #liste li.vide { display: block; color: var(--mute); padding: 18px 0 6px; border-top: 1px solid var(--rule); }
+  #liste li.vide b { display: block; color: var(--chalk); font: 700 22px/1.1 var(--cond); margin-bottom: 4px; }
+  .note { color: var(--mute); font-size: 13px; margin-top: 18px; max-width: 60ch; }
+
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+</head>
+<body>
+<div class="bar">
+  <button id="btnConnect" class="carte action" data-state="bad"><span class="led"></span><span class="txt" id="stBle">Connecter ma carte</span></button>
+  <span class="gps" id="stGps">GPS…</span>
+</div>
+
+<div class="moi">
+  <label for="nom">Ton nom</label>
+  <input id="nom" maxlength="6" placeholder="NOM" autocomplete="off" autocapitalize="characters" spellcheck="false">
+</div>
+
+<div class="radar" id="paneRadar">
+  <canvas id="radar" aria-label="Radar du groupe"></canvas>
+  <span class="cap" id="stCap"></span>
+  <span class="radar-info" id="radarInfo"></span>
+</div>
+
+
+<div class="tools">
+  <button id="btnCompass" aria-pressed="false">
+    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M15.5 8.5l-2 5-5 2 2-5z"/></svg>Boussole</button>
+  <button id="btnWake" aria-pressed="false">
+    <svg viewBox="0 0 24 24"><rect x="7" y="3" width="10" height="18" rx="2"/><path d="M11 18h2"/></svg>Écran on</button>
+  <button id="btnZoom">
+    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/></svg><span id="zoomTxt">Zoom auto</span></button>
+  <button id="btnPlan">
+    <svg viewBox="0 0 24 24"><path d="M3 6l6-2 6 2 6-2v14l-6 2-6-2-6 2z"/><path d="M9 4v14M15 6v14"/></svg><span id="planTxt">Plan</span></button>
+  <button id="btnCalib">
+    <svg viewBox="0 0 24 24"><path d="M4 18h2M9 18v-4M14 18v-8M19 18V6"/></svg>Calibrer</button>
+</div>
+
+<ul id="liste"></ul>
+
+<p class="note">Garde la page ouverte avec « Écran on » : si le téléphone se verrouille, ta position n'est plus mise à jour et les autres voient ta dernière position connue.</p>
+
+<script>
+"use strict";
+const SVC   = "6e7a0001-5c3b-4f2a-9d1e-7a2b3c4d5e6f";
+const POS   = "6e7a0002-5c3b-4f2a-9d1e-7a2b3c4d5e6f";
+const PEERS = "6e7a0003-5c3b-4f2a-9d1e-7a2b3c4d5e6f";
+
+const $ = id => document.getElementById(id);
+const store = {
+  get(k, d) { try { return localStorage.getItem(k) ?? d; } catch { return d; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch {} }
+};
+
+let device = null, chPos = null;
+let me = null;              // {lat, lon, acc, t}
+let heading = null;         // degres, 0 = nord
+let compassOn = false;
+let zoomIdx = 0;            // 0 = auto
+const ZOOMS = [null, 30, 60, 150, 300, 600, 1500, 3000];
+const peers = new Map();    // id -> {nom, lat, lon, acc, ageMin, vu}
+
+// ---------- Nom ----------
+$("nom").value = store.get("nom", "");
+$("nom").addEventListener("input", e => {
+  e.target.value = e.target.value.toUpperCase().replace(/[^A-Z0-9_-]/g, "").slice(0, 6);
+  store.set("nom", e.target.value);
+  envoyerPosition(true);
+});
+
+// ---------- Bluetooth ----------
+// Affiche un etat (texte + couleur) dans la barre du haut ou sur le radar
+function setPill(el, txt, cls) {
+  txt = txt.replace(/^(Carte|GPS|Boussole) : /, "");
+  if (el.id === "stBle") {
+    el.textContent = txt.charAt(0).toUpperCase() + txt.slice(1);
+    $("btnConnect").dataset.state = cls || "";
+  } else if (el.id === "stCap") {
+    el.textContent = txt; el.classList.toggle("on", cls === "ok" && /°$/.test(txt));
+  } else {
+    el.textContent = el.id === "stGps" ? "GPS " + txt : txt; el.dataset.state = cls || "";
+  }
+}
+
+// Bouton : si la carte est deja memorisee, on se reconnecte sans fenetre de choix.
+$("btnConnect").onclick = async () => {
+  if (!navigator.bluetooth) {
+    alert("Bluetooth indisponible dans ce navigateur.\nAndroid : ouvre cette page dans Chrome.\niPhone : ouvre-la dans l'appli Bluefy.");
+    return;
+  }
+  if (device && device.gatt && !device.gatt.connected) {
+    try { await connecter(); return; } catch {}
+  }
+  try {
+    const d = await navigator.bluetooth.requestDevice({ filters: [{ services: [SVC] }] });
+    adopter(d);
+    await connecter();
+  } catch (e) {
+    if (e.name !== "NotFoundError") alert("Connexion impossible : " + e.message);
+  }
+};
+
+function adopter(d) {
+  if (device === d) return;
+  device = d;
+  device.addEventListener("gattserverdisconnected", surDeconnexion);
+  store.set("carteId", d.id);
+}
+
+// Au chargement : retrouve la carte deja autorisee et s'y reconnecte tout seul.
+// Necessite dans Chrome Android : chrome://flags > "Web Bluetooth new permissions backend" = Enabled
+async function reconnexionAuto() {
+  if (!navigator.bluetooth || !navigator.bluetooth.getDevices) {
+    setPill($("stBle"), "Connecter ma carte", "bad");
+    return;
+  }
+  let liste = [];
+  try { liste = await navigator.bluetooth.getDevices(); } catch {}
+  const id = store.get("carteId", "");
+  const d = liste.find(x => x.id === id) || liste[0];
+  if (!d) { setPill($("stBle"), "Connecter ma carte", "bad"); return; }
+  adopter(d);
+  setPill($("stBle"), "Recherche de " + (d.name || "ta carte") + "…", "warn");
+  try { await connecter(); return; } catch {}
+  // pas a portee : on attend qu'elle se manifeste, puis on se connecte
+  if (d.watchAdvertisements) {
+    const surPub = async () => {
+      d.removeEventListener("advertisementreceived", surPub);
+      try { await d.unwatchAdvertisements?.(); } catch {}
+      try { await connecter(); } catch { surDeconnexion(); }
+    };
+    d.addEventListener("advertisementreceived", surPub);
+    try { await d.watchAdvertisements(); } catch { surDeconnexion(); }
+  } else {
+    surDeconnexion();
+  }
+}
+
+async function connecter() {
+  setPill($("stBle"), "Connexion…", "warn");
+  const srv = await device.gatt.connect();
+  const svc = await srv.getPrimaryService(SVC);
+  chPos = await svc.getCharacteristic(POS);
+  const chPeers = await svc.getCharacteristic(PEERS);
+  chPeers.addEventListener("characteristicvaluechanged", e => recevoir(e.target.value));
+  await chPeers.startNotifications();
+  setPill($("stBle"), "Carte : " + (device.name || "connectée"), "ok");
+  $("btnConnect").classList.remove("action");
+  envoyerPosition(true);
+}
+
+async function surDeconnexion() {
+  chPos = null;
+  setPill($("stBle"), "Carte perdue, reconnexion…", "bad");
+  $("btnConnect").classList.add("action");
+  if (reconnexionEnCours) return;
+  reconnexionEnCours = true;
+  for (let i = 0; device && !device.gatt.connected; i++) {
+    await new Promise(r => setTimeout(r, Math.min(1500 + i * 500, 10000)));
+    if (document.visibilityState !== "visible") continue;   // on attend que la page soit visible
+    try { await connecter(); break; } catch {}
+  }
+  reconnexionEnCours = false;
+}
+let reconnexionEnCours = false;
+
+// au retour sur la page (apres un ecran verrouille par ex.), on relance tout de suite
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && device && !device.gatt.connected && !reconnexionEnCours) {
+    connecter().catch(() => surDeconnexion());
+  }
+});
+reconnexionAuto();
+
+function recevoir(dv) {
+  if (dv.byteLength < 20) return;
+  const id = (dv.getUint8(0) | dv.getUint8(1) << 8 | dv.getUint8(2) << 16).toString(16).padStart(6, "0");
+  const lat = dv.getInt32(3, true) / 1e7;
+  const lon = dv.getInt32(7, true) / 1e7;
+  const acc = dv.getUint8(11);
+  const ageMin = dv.getUint8(12);
+  const rssi = dv.getInt8(13);              // 0 = recu via un relais (pas de mesure)
+  let nom = "";
+  for (let i = 14; i < 20; i++) { const c = dv.getUint8(i); if (c) nom += String.fromCharCode(c); }
+  const avant = peers.get(id);
+  if (!avant && navigator.vibrate) navigator.vibrate(60);   // petite vibration a la 1re apparition
+  const now = Date.now();
+  // force du signal lissee (moyenne glissante), seulement quand recu en direct
+  let sig = avant ? avant.sig : null, sigVu = avant ? avant.sigVu : 0;
+  if (rssi < 0) {
+    sig = (sig == null || now - sigVu > 10000) ? rssi : sig * 0.7 + rssi * 0.3;
+    sigVu = now;
+  }
+  peers.set(id, { nom: nom || "?" + id.slice(-3), lat, lon, sansGps: acc === 255, acc, ageMin, vu: now, sig, sigVu });
+  dessiner();
+}
+
+// ---------- GPS ----------
+let dernierEnvoi = 0;
+if ("geolocation" in navigator) {
+  navigator.geolocation.watchPosition(p => {
+    me = { lat: p.coords.latitude, lon: p.coords.longitude, acc: p.coords.accuracy, t: Date.now() };
+    setPill($("stGps"), "±" + Math.round(me.acc) + " m", me.acc < 30 ? "ok" : "warn");
+    envoyerPosition(false);
+    dessiner();
+  }, err => {
+    setPill($("stGps"), err.code === 1 ? "refusé" : "sans signal", "bad");
+  }, { enableHighAccuracy: true, maximumAge: 2000, timeout: 30000 });
+} else {
+  setPill($("stGps"), "indisponible", "bad");
+}
+
+async function envoyerPosition(force) {
+  if (!chPos || !me) return;
+  const now = Date.now();
+  if (!force && now - dernierEnvoi < 1000) return;
+  dernierEnvoi = now;
+  const buf = new ArrayBuffer(16), dv = new DataView(buf);
+  dv.setInt32(0, Math.round(me.lat * 1e7), true);
+  dv.setInt32(4, Math.round(me.lon * 1e7), true);
+  dv.setUint16(8, Math.min(65000, Math.round(me.acc)), true);
+  const nom = ($("nom").value || "").slice(0, 6);
+  for (let i = 0; i < 6; i++) dv.setUint8(10 + i, i < nom.length ? nom.charCodeAt(i) & 0x7f : 0);
+  try {
+    if (chPos.writeValueWithoutResponse) await chPos.writeValueWithoutResponse(buf);
+    else await chPos.writeValue(buf);
+  } catch {}
+}
+
+// ---------- Boussole ----------
+// Cap vers lequel pointe le telephone, quelle que soit son inclinaison :
+//  - tenu a plat : direction du HAUT du telephone ;
+//  - tenu debout (comme pour prendre une photo) : direction du DOS du telephone.
+function capDepuisAngles(alpha, beta, gamma) {
+  const d = Math.PI / 180;
+  const cX = Math.cos(beta * d), sX = Math.sin(beta * d);
+  const cY = Math.cos(gamma * d), sY = Math.sin(gamma * d);
+  const cZ = Math.cos(alpha * d), sZ = Math.sin(alpha * d);
+  // axe "haut du telephone" projete a l'horizontale (x = est, y = nord)
+  const hautE = -sZ * cX, hautN = cZ * cX;
+  // axe "dos du telephone" projete a l'horizontale
+  const dosE = -(cZ * sY + sZ * sX * cY), dosN = -(sZ * sY - cZ * sX * cY);
+  // on prend l'axe le plus horizontal des deux (le plus fiable)
+  const useDos = Math.hypot(dosE, dosN) > Math.hypot(hautE, hautN);
+  const [e, n] = useDos ? [dosE, dosN] : [hautE, hautN];
+  return (Math.atan2(e, n) / d + 360) % 360;
+}
+
+let capLisse = null;
+function surOrientation(ev) {
+  let h = null;
+  if (typeof ev.webkitCompassHeading === "number") {
+    h = ev.webkitCompassHeading;                                   // iPhone (Bluefy)
+  } else if (ev.absolute && ev.alpha != null && ev.beta != null && ev.gamma != null) {
+    h = capDepuisAngles(ev.alpha, ev.beta, ev.gamma);             // Android
+    const ang = (screen.orientation && screen.orientation.angle) || 0;
+    h = (h + ang) % 360;
+  }
+  if (h == null || isNaN(h)) return;
+  // lissage pour eviter que le radar tremble
+  if (capLisse == null) capLisse = h;
+  else { let diff = ((h - capLisse + 540) % 360) - 180; capLisse = (capLisse + diff * 0.25 + 360) % 360; }
+  heading = capLisse;
+  setPill($("stCap"), Math.round(heading) + "°", "ok");
+}
+
+$("btnCompass").onclick = async () => {
+  compassOn = !compassOn;
+  if (compassOn) {
+    try {
+      if (typeof DeviceOrientationEvent !== "undefined" && DeviceOrientationEvent.requestPermission) {
+        const r = await DeviceOrientationEvent.requestPermission();
+        if (r !== "granted") { compassOn = false; alert("Boussole refusée"); return; }
+      }
+    } catch {}
+    window.addEventListener("deviceorientationabsolute", surOrientation);
+    window.addEventListener("deviceorientation", surOrientation);
+    setTimeout(() => { if (compassOn && heading == null) alert("Pas de boussole détectée sur ce téléphone."); }, 2500);
+  } else {
+    window.removeEventListener("deviceorientationabsolute", surOrientation);
+    window.removeEventListener("deviceorientation", surOrientation);
+    heading = null; capLisse = null;
+  }
+  $("btnCompass").classList.toggle("on", compassOn);
+  $("btnCompass").setAttribute("aria-pressed", compassOn);
+  setPill($("stCap"), "", "");
+};
+
+// ---------- Ecran allume ----------
+let wakeLock = null;
+async function demanderWake() {
+  try { wakeLock = await navigator.wakeLock.request("screen"); $("btnWake").classList.add("on"); $("btnWake").setAttribute("aria-pressed", "true");
+        wakeLock.addEventListener("release", () => { $("btnWake").classList.remove("on"); $("btnWake").setAttribute("aria-pressed", "false"); }); } catch {}
+}
+$("btnWake").onclick = async () => {
+  if (wakeLock && !wakeLock.released) { await wakeLock.release(); wakeLock = null; store.set("wake", "0"); }
+  else { await demanderWake(); store.set("wake", "1"); }
+};
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && store.get("wake", "0") === "1") demanderWake();
+});
+if (store.get("wake", "0") === "1") demanderWake();
+
+$("btnZoom").onclick = () => {
+  zoomIdx = (zoomIdx + 1) % ZOOMS.length;
+  $("zoomTxt").textContent = ZOOMS[zoomIdx] ? fmtDist(ZOOMS[zoomIdx]) : "Zoom auto";
+  dessiner();
+};
+
+$("btnCalib").onclick = () => {
+  const now = Date.now();
+  const frais = [...peers.values()].filter(p => p.sig != null && now - p.sigVu < 5000);
+  if (!frais.length) { alert("Aucun signal direct reçu en ce moment. Place-toi à 1 m d'une autre carte et réessaie."); return; }
+  const proche = frais.reduce((a, b) => (b.sig > a.sig ? b : a));
+  if (!confirm("Calibrer avec " + proche.nom + " (signal " + Math.round(proche.sig) + " dBm) ?\nVous devez être à 1 m l'un de l'autre, cartes à leur place habituelle.")) return;
+  REF_1M = proche.sig; store.set("ref1m", String(REF_1M));
+  dessiner();
+};
+
+// ---------- Calculs ----------
+function distCap(a, b) {
+  const R = 6371000, toR = Math.PI / 180;
+  const dLat = (b.lat - a.lat) * toR, dLon = (b.lon - a.lon) * toR;
+  const la1 = a.lat * toR, la2 = b.lat * toR;
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(la1) * Math.cos(la2) * Math.sin(dLon / 2) ** 2;
+  const d = 2 * R * Math.asin(Math.sqrt(h));
+  const y = Math.sin(dLon) * Math.cos(la2);
+  const x = Math.cos(la1) * Math.sin(la2) - Math.sin(la1) * Math.cos(la2) * Math.cos(dLon);
+  return { d, cap: (Math.atan2(y, x) / toR + 360) % 360 };
+}
+// Distance estimee a partir de la force du signal.
+// REF = signal mesure a 1 m (reglable avec le bouton "Calibrer 1 m"), N = attenuation du milieu.
+let REF_1M = parseFloat(store.get("ref1m", "-40"));
+const N_ATT = 2.5;
+function distSignal(sig) { return Math.pow(10, (REF_1M - sig) / (10 * N_ATT)); }
+function barres(sig) {
+  const n = sig > -55 ? 4 : sig > -67 ? 3 : sig > -78 ? 2 : sig > -88 ? 1 : 0;
+  return "▮".repeat(n) + "▯".repeat(4 - n);
+}
+function fmtDist(m) {
+  if (m < 1000) return Math.round(m) + " m";
+  const km = m / 1000;
+  return (Number.isInteger(Math.round(km * 10) / 10) || km >= 10 ? Math.round(km) : km.toFixed(1)).toString().replace(".", ",") + " km";
+}
+function fmtAge(s) { return s < 60 ? s + " s" : Math.floor(s / 60) + " min"; }
+const ECHELLES = [15, 30, 60, 150, 300, 600, 900, 1500, 3000, 6000];   // 3 anneaux : valeurs rondes
+
+// ---------- Dessin ----------
+// Une couleur fixe par personne, la meme sur le radar et dans la liste
+const COULEURS = ["#5be3c4", "#ff8fb1", "#8fb3ff", "#ffa552", "#c9a8ff", "#a6e35b", "#ff6b6b", "#6be0ff"];
+// attribuees dans l'ordre d'arrivee (memorisees), pour que deux personnes n'aient jamais la meme
+let ordreCouleurs = {};
+try { ordreCouleurs = JSON.parse(store.get("couleurs", "{}")) || {}; } catch {}
+function couleur(id) {
+  if (!(id in ordreCouleurs)) {
+    const prises = new Set(Object.values(ordreCouleurs));
+    let i = 0; while (prises.has(i) && i < COULEURS.length) i++;
+    ordreCouleurs[id] = i % COULEURS.length;
+    store.set("couleurs", JSON.stringify(ordreCouleurs));
+  }
+  return COULEURS[ordreCouleurs[id]];
+}
+const POINTS = ["N", "E", "S", "O"];
+
+const cv = $("radar"), ctx = cv.getContext("2d");
+function dessiner() {
+  const dpr = window.devicePixelRatio || 1;
+  const W = cv.clientWidth, H = cv.clientHeight;   // 0 quand on est sur la vue Carte : on dessine "dans le vide", sans erreur
+  if (cv.width !== Math.round(W * dpr)) { cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+  const css = getComputedStyle(document.documentElement);
+  const col = n => css.getPropertyValue(n).trim();
+  const COND = '"Barlow Condensed", "Arial Narrow", sans-serif';
+  const cx = W / 2, cy = H / 2;
+  const Rb = Math.max(Math.min(W, H) / 2 - 2, 40);      // bord exterieur de la couronne
+  const Rmax = Rb - 30;                   // zone utile du radar
+  const now = Date.now();
+  const rot = (compassOn && heading != null) ? heading : 0;
+
+  // --- calcul des positions ---
+  const liste = [];
+  for (const [id, p] of peers) {
+    const vuS = Math.round((now - p.vu) / 1000);
+    const it = { id, ...p, vuS, c: couleur(id) };
+    if (me && !p.sansGps) Object.assign(it, distCap(me, p));
+    it.sigFrais = p.sig != null && now - p.sigVu < 10000;
+    if (it.sigFrais) it.dSig = distSignal(p.sig);
+    // trop proches : l'erreur des deux GPS est plus grande que la distance
+    it.gpsFlou = it.d != null && it.d < (me.acc + (p.acc || 0)) * 0.8;
+    // distance affichee : celle du signal quand le GPS n'est pas fiable a courte distance
+    it.dAff = (it.gpsFlou && it.sigFrais) ? it.dSig : (it.d != null ? it.d : (it.sigFrais ? it.dSig : null));
+    it.vieux = it.vuS > 30 || it.ageMin > 0;
+    it.perdu = it.vuS > 120;
+    liste.push(it);
+  }
+  const loin = Math.max(0, ...liste.filter(i => i.dAff != null && i.cap != null).map(i => i.dAff));
+  const echelle = ZOOMS[zoomIdx] || ECHELLES.find(e => e >= loin * 1.1) || ECHELLES[ECHELLES.length - 1];
+
+  // --- fond du radar ---
+  ctx.fillStyle = col("--plate");
+  ctx.beginPath(); ctx.arc(cx, cy, Rb, 0, Math.PI * 2); ctx.fill();
+
+  // --- couronne de boussole : graduations tous les 10°, tourne avec le telephone ---
+  ctx.save(); ctx.translate(cx, cy); ctx.rotate(-rot * Math.PI / 180);
+  for (let deg = 0; deg < 360; deg += 10) {
+    const a = deg * Math.PI / 180, card = deg % 90 === 0, mi = deg % 30 === 0;
+    if (card) continue;
+    const r1 = Rb - 4, r0 = r1 - (mi ? 9 : 5);
+    ctx.strokeStyle = col("--rule"); ctx.lineWidth = mi ? 2 : 1;
+    ctx.beginPath(); ctx.moveTo(Math.sin(a) * r0, -Math.cos(a) * r0); ctx.lineTo(Math.sin(a) * r1, -Math.cos(a) * r1); ctx.stroke();
+  }
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  POINTS.forEach((t, i) => {
+    const a = i * Math.PI / 2, r = Rb - 14;
+    ctx.save(); ctx.translate(Math.sin(a) * r, -Math.cos(a) * r); ctx.rotate(a);
+    ctx.fillStyle = i === 0 ? col("--alert") : col("--mute");
+    ctx.font = (i === 0 ? "700 20px " : "600 16px ") + COND;
+    ctx.fillText(t, 0, 1); ctx.restore();
+  });
+  ctx.restore();
+
+  // --- plan des rues (s'il a ete telecharge) ---
+  dessinerPlan(cx, cy, Rmax + 3, Rmax / echelle, rot, echelle);
+
+  // --- anneaux de distance ---
+  ctx.strokeStyle = plan ? "#4a5390" : col("--rule"); ctx.lineWidth = 1;
+  ctx.save(); if (plan) ctx.setLineDash([2, 4]);
+  for (let k = 1; k <= 3; k++) {
+    ctx.beginPath(); ctx.arc(cx, cy, Rmax * k / 3, 0, Math.PI * 2); ctx.stroke();
+  }
+  ctx.restore();
+  ctx.fillStyle = col("--mute"); ctx.font = "600 13px " + COND;
+  ctx.textAlign = "left"; ctx.textBaseline = "middle";
+  for (let k = 1; k <= 3; k++) {
+    const r = Rmax * k / 3, a = Math.PI * 0.75;     // etiquettes en bas a droite, a l'ecart
+    const tx = cx + Math.cos(a - Math.PI / 2) * r + 4, ty = cy + Math.sin(a - Math.PI / 2) * r;
+    ctx.lineWidth = 4; ctx.strokeStyle = col("--plate"); ctx.strokeText(fmtDist(echelle * k / 3), tx, ty);
+    ctx.fillText(fmtDist(echelle * k / 3), tx, ty);
+  }
+
+  // --- moi ---
+  if (me && me.acc) {
+    const ra = Math.min(Rmax, me.acc / echelle * Rmax);
+    ctx.fillStyle = col("--hivis"); ctx.globalAlpha = .12;
+    ctx.beginPath(); ctx.arc(cx, cy, ra, 0, Math.PI * 2); ctx.fill(); ctx.globalAlpha = 1;
+  }
+  ctx.fillStyle = col("--hivis");
+  if (compassOn && heading != null) {             // fleche : la ou je regarde
+    ctx.beginPath(); ctx.moveTo(cx, cy - 13); ctx.lineTo(cx + 9, cy + 9); ctx.lineTo(cx, cy + 4); ctx.lineTo(cx - 9, cy + 9); ctx.closePath(); ctx.fill();
+  } else {
+    ctx.beginPath(); ctx.arc(cx, cy, 8, 0, Math.PI * 2); ctx.fill();
+  }
+
+  // --- les autres ---
+  for (const it of liste) {
+    if (it.cap == null || it.dAff == null) continue;
+    const a = (it.cap - rot) * Math.PI / 180;
+    const r = Math.min(it.dAff / echelle, 1) * Rmax;
+    ctx.globalAlpha = it.perdu ? .4 : 1;
+    if (it.gpsFlou) {     // trop pres : on connait la distance, pas la direction
+      ctx.save(); ctx.setLineDash([3, 5]); ctx.strokeStyle = it.c; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(cx, cy, Math.max(r, 16), 0, Math.PI * 2); ctx.stroke(); ctx.restore();
+      ctx.globalAlpha = 1;
+      continue;
+    }
+    const x = cx + Math.sin(a) * r, y = cy - Math.cos(a) * r;
+    const R = 13;
+    if (it.vieux) {
+      ctx.fillStyle = col("--plate"); ctx.beginPath(); ctx.arc(x, y, R, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = it.c; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(x, y, R - 1.5, 0, Math.PI * 2); ctx.stroke();
+      ctx.fillStyle = it.c;
+    } else {
+      ctx.fillStyle = it.c; ctx.beginPath(); ctx.arc(x, y, R, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = col("--ink");
+    }
+    ctx.font = "700 16px " + COND; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText(it.nom.charAt(0), x, y + 1);
+    if (it.dAff > echelle) {   // hors champ : petit chevron vers l'exterieur
+      ctx.fillStyle = it.c; ctx.save(); ctx.translate(x, y); ctx.rotate(a);
+      ctx.beginPath(); ctx.moveTo(0, -R - 9); ctx.lineTo(6, -R - 3); ctx.lineTo(-6, -R - 3); ctx.closePath(); ctx.fill(); ctx.restore();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // --- liste ---
+  liste.sort((a, b) => (a.dAff ?? 1e9) - (b.dAff ?? 1e9));
+  const ul = $("liste");
+  ul.innerHTML = "";
+  if (!liste.length) {
+    const li = document.createElement("li");
+    li.className = "vide";
+    li.innerHTML = device && device.gatt && device.gatt.connected
+      ? "<b>Personne en vue</b>Dès qu'une autre carte du groupe est à portée, elle apparaît ici."
+      : "<b>Connecte ta carte</b>Allume ta carte, puis appuie sur « Connecter ma carte » en haut.";
+    ul.appendChild(li);
+    return;
+  }
+  for (const it of liste) {
+    const li = document.createElement("li");
+    li.style.setProperty("--c", it.c);
+    if (it.vieux) li.classList.add("vieux");
+    if (it.perdu) li.classList.add("perdu");
+
+    let info;
+    if (it.sansGps) info = "pas encore de position";
+    else if (it.gpsFlou) info = "tout près";
+    else if (it.ageMin > 0) info = "position d'il y a " + it.ageMin + " min";
+    else info = it.vuS < 5 ? "à l'instant" : "il y a " + fmtAge(it.vuS);
+    if (it.perdu) info = "plus de nouvelles depuis " + fmtAge(it.vuS);
+
+    let barresHtml = "";
+    if (it.sigFrais) {
+      const n = it.sig > -55 ? 4 : it.sig > -67 ? 3 : it.sig > -78 ? 2 : it.sig > -88 ? 1 : 0;
+      barresHtml = `<span class="barres" title="Signal radio direct">${[0, 1, 2, 3].map(k => `<i class="${k < n ? "on" : ""}"></i>`).join("")}</span>`;
+    }
+
+    let distHtml = "";
+    if (it.dAff != null) {
+      const txt = fmtDist(it.dAff), [v, u] = txt.split(" ");
+      distHtml = `<span class="dist">${(it.gpsFlou || it.d == null) ? "~" : ""}${v}<small>${u}</small></span>`;
+    } else {
+      distHtml = `<span class="dist">${me ? "?" : "…"}</span>`;
+    }
+    const fleche = it.cap != null
+      ? `<svg class="fleche${it.gpsFlou ? " flou" : ""}" viewBox="0 0 24 24" style="transform:rotate(${it.cap - rot}deg)"><path d="M12 2l7 18-7-4-7 4z"/></svg>`
+      : `<span class="fleche"></span>`;
+
+    li.innerHTML = `<span class="pastille"></span><div><div class="nom"></div><div class="info">${barresHtml}<span class="quand"></span></div></div><div class="droite">${distHtml}${fleche}</div>`;
+    li.querySelector(".pastille").textContent = it.nom.charAt(0);
+    li.querySelector(".nom").textContent = it.nom;
+    li.querySelector(".quand").textContent = info;
+    ul.appendChild(li);
+  }
+}
+if (document.fonts) document.fonts.ready.then(() => dessiner());
+
+
+// ---------- Plan des rues hors ligne ----------
+// Telecharge une seule fois (avec du reseau) les rues autour de toi depuis OpenStreetMap
+// (service Overpass), les garde sur le telephone, et les dessine sous le radar.
+let plan = null;   // { lat0, lon0, rayon, date, voies: [{t, n, p:Float32Array, b:[minx,miny,maxx,maxy]}] }
+const M_LAT = 110540;
+const mLon = lat => 111320 * Math.cos(lat * Math.PI / 180);
+
+// stockage (IndexedDB : le plan peut faire quelques Mo)
+function bdd() {
+  return new Promise((ok, ko) => {
+    const r = indexedDB.open("radar", 1);
+    r.onupgradeneeded = () => r.result.createObjectStore("plan");
+    r.onsuccess = () => ok(r.result); r.onerror = () => ko(r.error);
+  });
+}
+async function bddLire(k) {
+  const db = await bdd();
+  return new Promise((ok, ko) => { const q = db.transaction("plan").objectStore("plan").get(k); q.onsuccess = () => ok(q.result); q.onerror = () => ko(q.error); });
+}
+async function bddEcrire(k, v) {
+  const db = await bdd();
+  return new Promise((ok, ko) => { const t = db.transaction("plan", "readwrite"); t.objectStore("plan").put(v, k); t.oncomplete = ok; t.onerror = () => ko(t.error); });
+}
+
+// type de voie -> style (ordre de dessin : du moins important au plus important)
+function typeVoie(tags) {
+  const h = tags.highway;
+  if (tags.waterway === "river" || tags.waterway === "canal") return "eau";
+  if (tags.natural === "water" || tags.waterway === "riverbank") return "eau-zone";
+  if (tags.leisure === "park" || tags.landuse === "grass" || tags.leisure === "garden") return "parc";
+  if (!h) return null;
+  if (/^(motorway|trunk|primary)(_link)?$/.test(h)) return "grande";
+  if (/^(secondary|tertiary)(_link)?$/.test(h)) return "moyenne";
+  if (/^(footway|path|pedestrian|steps|cycleway|track|bridleway|corridor)$/.test(h)) return "pieton";
+  return "rue";
+}
+const STYLES = {
+  "parc":     { fill: "#22394a" },
+  "eau-zone": { fill: "#1d3768" },
+  "eau":      { stroke: "#2a4f8f", w: 7 },
+  "pieton":   { stroke: "#2f3766", w: 1.2, dash: [3, 3] },
+  "rue":      { stroke: "#3b4580", w: 2.6 },
+  "moyenne":  { stroke: "#4b569a", w: 4 },
+  "grande":   { stroke: "#5b67b0", w: 5.5 },
+};
+const ORDRE = ["parc", "eau-zone", "eau", "pieton", "rue", "moyenne", "grande"];
+
+function preparerPlan(brut) {
+  const voies = brut.voies.map(v => {
+    const p = Float32Array.from(v.p);
+    let a = Infinity, b = Infinity, c = -Infinity, d = -Infinity;
+    for (let i = 0; i < p.length; i += 2) { a = Math.min(a, p[i]); c = Math.max(c, p[i]); b = Math.min(b, p[i + 1]); d = Math.max(d, p[i + 1]); }
+    return { t: v.t, n: v.n, p, b: [a, b, c, d] };
+  });
+  voies.sort((x, y) => ORDRE.indexOf(x.t) - ORDRE.indexOf(y.t));
+  return { ...brut, voies };
+}
+
+async function chargerPlan() {
+  try {
+    const brut = await bddLire("plan");
+    if (brut) { plan = preparerPlan(brut); majBoutonPlan(); dessiner(); }
+  } catch {}
+}
+function majBoutonPlan() {
+  $("btnPlan").classList.toggle("on", !!plan);
+  $("planTxt").textContent = plan ? "Plan " + String(plan.rayon / 1000).replace(".", ",") + " km" : "Plan";
+}
+
+async function telechargerPlan() {
+  if (!me) { alert("Il faut d'abord ta position GPS : autorise la position et attends que « GPS ± … m » s'affiche."); return; }
+  const deja = plan ? "Un plan est déjà enregistré (" + new Date(plan.date).toLocaleDateString("fr-FR") + "). Il sera remplacé.\n\n" : "";
+  const choix = prompt(deja + "Télécharger les rues autour de ta position actuelle.\nRayon en km (0,5 à 5). Plus c'est grand, plus c'est long :", "1.5");
+  if (choix == null) return;
+  const km = Math.min(5, Math.max(0.5, parseFloat(String(choix).replace(",", ".")) || 1.5));
+  const R = Math.round(km * 1000), lat0 = me.lat, lon0 = me.lon;
+  // un carre plutot qu'un cercle : beaucoup plus rapide a calculer pour le serveur
+  const dLat = R / M_LAT, dLon = R / mLon(lat0);
+  const bb = [lat0 - dLat, lon0 - dLon, lat0 + dLat, lon0 + dLon].map(v => v.toFixed(5)).join(",");
+  const requete = `[out:json][timeout:120][bbox:${bb}];(
+    way["highway"]["highway"!~"^(proposed|construction|abandoned|razed|platform|raceway|bus_stop|elevator|steps|corridor)$"];
+    way["waterway"~"^(river|canal|riverbank)$"];
+    way["natural"="water"];
+    way["leisure"~"^(park|garden)$"];
+  );out geom qt;`;
+  // plusieurs serveurs : si l'un est sature, on essaie le suivant
+  const SERVEURS = [
+    "https://overpass-api.de/api/interpreter",
+    "https://overpass.kumi.systems/api/interpreter",
+    "https://overpass.private.coffee/api/interpreter",
+    "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+  ];
+  const info = $("radarInfo");
+  try {
+    let rep = null, derniere = "";
+    for (let n = 0; n < SERVEURS.length && !rep; n++) {
+      info.textContent = "Téléchargement du plan" + (n ? " (serveur " + (n + 1) + "/" + SERVEURS.length + ")" : "") + "…";
+      try {
+        const r = await fetch(SERVEURS[n], {
+          method: "POST", body: "data=" + encodeURIComponent(requete),
+          headers: { "Content-Type": "application/x-www-form-urlencoded" }
+        });
+        if (r.ok) rep = r; else derniere = "erreur " + r.status;
+      } catch (e) { derniere = e.message || String(e); }
+    }
+    if (!rep) throw new Error("tous les serveurs sont occupés (" + derniere + "). Réessaie dans quelques minutes, ou avec un rayon plus petit");
+    info.textContent = "Préparation du plan…";
+    const data = await rep.json();
+    const kx = mLon(lat0);
+    const voies = [];
+    for (const el of data.elements || []) {
+      if (el.type !== "way" || !el.geometry) continue;
+      const t = typeVoie(el.tags || {});
+      if (!t) continue;
+      const p = [];
+      for (const g of el.geometry) p.push(Math.round((g.lon - lon0) * kx * 10) / 10, Math.round((g.lat - lat0) * M_LAT * 10) / 10);
+      const n = (t === "grande" || t === "moyenne" || t === "rue") ? (el.tags.name || "") : "";
+      voies.push({ t, n, p });
+    }
+    if (!voies.length) throw new Error("aucune rue trouvée ici");
+    const brut = { lat0, lon0, rayon: R, date: Date.now(), voies };
+    await bddEcrire("plan", brut);
+    plan = preparerPlan(brut);
+    majBoutonPlan();
+    info.textContent = "Plan enregistré : " + voies.length + " rues";
+    setTimeout(() => { if (info.textContent.startsWith("Plan enregistré")) info.textContent = ""; }, 4000);
+    dessiner();
+  } catch (e) {
+    info.textContent = "";
+    alert("Téléchargement impossible : " + (e.message || e) + (navigator.onLine ? "" : "\nTu es hors ligne : il faut du réseau pour télécharger le plan."));
+  }
+}
+$("btnPlan").onclick = telechargerPlan;
+
+// Dessine les rues : position de chaque point par rapport a moi, en metres, puis en pixels
+function dessinerPlan(cx, cy, Rclip, pxParM, rot, echelle) {
+  if (!plan || !me) return;
+  const kx = mLon(plan.lat0);
+  const mx = (me.lon - plan.lon0) * kx, my = (me.lat - plan.lat0) * M_LAT;
+  const vue = Rclip / pxParM;                 // demi-largeur visible en metres
+  const a = rot * Math.PI / 180, co = Math.cos(a), si = Math.sin(a);   // le plan tourne avec la boussole
+  const loin = echelle >= 900, tresLoin = echelle >= 1500;
+
+  // hors de la zone telechargee
+  if (Math.hypot(mx, my) > plan.rayon + vue) {
+    $("radarInfo").textContent = $("radarInfo").textContent || "Tu es hors de la zone du plan";
+    return;
+  } else if ($("radarInfo").textContent === "Tu es hors de la zone du plan") $("radarInfo").textContent = "";
+
+  ctx.save();
+  ctx.beginPath(); ctx.arc(cx, cy, Rclip, 0, Math.PI * 2); ctx.clip();
+  ctx.lineCap = "round"; ctx.lineJoin = "round";
+  const etiquettes = [];
+  let typeCourant = null;
+
+  for (const v of plan.voies) {
+    const b = v.b;
+    if (b[2] < mx - vue || b[0] > mx + vue || b[3] < my - vue || b[1] > my + vue) continue;
+    if (loin && v.t === "pieton") continue;
+    if (tresLoin && v.t === "rue") continue;
+    const st = STYLES[v.t];
+    if (v.t !== typeCourant) {
+      typeCourant = v.t;
+      ctx.setLineDash(st.dash || []);
+      if (st.stroke) { ctx.strokeStyle = st.stroke; ctx.lineWidth = Math.max(1, st.w * Math.min(1.4, 120 / echelle + .45)); }
+      if (st.fill) ctx.fillStyle = st.fill;
+    }
+    const p = v.p;
+    ctx.beginPath();
+    for (let i = 0; i < p.length; i += 2) {
+      const dx = p[i] - mx, dy = p[i + 1] - my;
+      const x = cx + (dx * co - dy * si) * pxParM, y = cy - (dx * si + dy * co) * pxParM;
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    if (st.fill) ctx.fill(); else ctx.stroke();
+
+    // noms des rues quand on est assez zoome : on cherche un bout de rue visible assez long pour le nom
+    if (v.n && echelle <= 300 && etiquettes.length < 25) {
+      const larg = v.n.length * 6 + 12;
+      trouve:
+      for (let i = 0; i < p.length - 2; i += 2) {
+        const sx = p[i + 2] - p[i], sy = p[i + 3] - p[i + 1];
+        const lpx = Math.hypot(sx, sy) * pxParM;
+        if (lpx < larg) continue;
+        const nb = Math.max(1, Math.floor(lpx / 110));
+        for (let k = 0; k < nb; k++) {
+          const f = (k + .5) / nb;
+          const ex = p[i] + sx * f - mx, ey = p[i + 1] + sy * f - my;
+          const x = cx + (ex * co - ey * si) * pxParM, y = cy - (ex * si + ey * co) * pxParM;
+          const dc = Math.hypot(x - cx, y - cy);
+          if (dc > Rclip - larg / 2 - 4 || dc < 26) continue;
+          if (etiquettes.some(e => Math.hypot(e.x - x, e.y - y) < 70)) continue;
+          let ang = -Math.atan2(sx * si + sy * co, sx * co - sy * si);
+          if (ang > Math.PI / 2) ang -= Math.PI; if (ang < -Math.PI / 2) ang += Math.PI;
+          etiquettes.push({ x, y, ang, n: v.n });
+          break trouve;
+        }
+      }
+    }
+  }
+  ctx.setLineDash([]);
+  ctx.font = "600 12px " + '"Barlow Condensed", "Arial Narrow", sans-serif';
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  for (const e of etiquettes) {
+    ctx.save(); ctx.translate(e.x, e.y); ctx.rotate(e.ang);
+    ctx.lineWidth = 3; ctx.strokeStyle = "#20264a"; ctx.strokeText(e.n, 0, 0);
+    ctx.fillStyle = "#a9aed4"; ctx.fillText(e.n, 0, 0);
+    ctx.restore();
+  }
+  ctx.restore();
+}
+
+// boussole active : on redessine plus souvent pour que le plan tourne en douceur
+let dernierDessin = 0;
+(function boucle(t) {
+  if (compassOn && heading != null && document.visibilityState === "visible" && t - dernierDessin > 120) {
+    dernierDessin = t; dessiner();
+  }
+  requestAnimationFrame(boucle);
+})(0);
+chargerPlan();
+
+window.addEventListener("resize", dessiner);
+setInterval(dessiner, 1000);
+dessiner();
+
+if ("serviceWorker" in navigator && location.protocol === "https:") {
+  navigator.serviceWorker.register("sw.js").catch(() => {});
+}
+</script>
+</body>
+</html>
